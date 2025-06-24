@@ -1,0 +1,244 @@
+#!/bin/bash
+
+# LocalMind AI Agent - Universal Installer
+# Auto-detects OS and runs appropriate install script
+# Version: 1.0
+
+set -e
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+print_header() {
+    clear
+    echo -e "${PURPLE}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${PURPLE}║                    ${CYAN}LocalMind AI Agent${PURPLE}                     ║${NC}"
+    echo -e "${PURPLE}║                   ${YELLOW}Universal Installer${PURPLE}                   ║${NC}"
+    echo -e "${PURPLE}║                                                            ║${NC}"
+    echo -e "${PURPLE}║  ${GREEN}Privacy-First Local AI Assistant with OS Integration${PURPLE}   ║${NC}"
+    echo -e "${PURPLE}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+}
+
+print_info() {
+    echo -e "${CYAN}ℹ️  $1${NC}"
+}
+
+print_success() {
+    echo -e "${GREEN}✅ $1${NC}"
+}
+
+print_error() {
+    echo -e "${RED}❌ $1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠️  $1${NC}"
+}
+
+detect_os() {
+    if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]] || [[ -n "$WINDIR" ]]; then
+        OS="windows"
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        OS="macos"
+    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        OS="linux"
+    else
+        OS="unknown"
+    fi
+}
+
+check_dependencies() {
+    print_info "Checking for required tools..."
+    
+    if [[ "$OS" == "windows" ]]; then
+        # Check for PowerShell
+        if ! command -v powershell &> /dev/null && ! command -v pwsh &> /dev/null; then
+            print_error "PowerShell is required but not found"
+            print_info "Please install PowerShell from: https://docs.microsoft.com/powershell/scripting/install/installing-powershell"
+            exit 1
+        fi
+        print_success "PowerShell found"
+    else
+        # Check for bash
+        if [[ -z "$BASH_VERSION" ]]; then
+            print_error "Bash is required but not found"
+            exit 1
+        fi
+        print_success "Bash found"
+    fi
+}
+
+download_installer() {
+    print_info "Downloading installer for $OS..."
+    
+    local base_url="https://raw.githubusercontent.com/your-repo/localmind/main/scripts"
+    
+    case "$OS" in
+        "windows")
+            local installer_url="${base_url}/install.ps1"
+            local installer_file="install.ps1"
+            ;;
+        "macos"|"linux")
+            local installer_url="${base_url}/install.sh"
+            local installer_file="install.sh"
+            ;;
+        *)
+            print_error "Unsupported operating system: $OS"
+            exit 1
+            ;;
+    esac
+    
+    # For now, we'll assume the scripts are in the same directory
+    # In a real deployment, you'd download from GitHub or another source
+    if [[ -f "$installer_file" ]]; then
+        print_success "Installer found: $installer_file"
+        return 0
+    else
+        print_warning "Installer script not found locally"
+        print_info "Please ensure you have the appropriate installer script:"
+        case "$OS" in
+            "windows")
+                echo "  - install.ps1 (Windows PowerShell script)"
+                ;;
+            *)
+                echo "  - install.sh (Unix/Linux/macOS script)"
+                ;;
+        esac
+        return 1
+    fi
+}
+
+run_installer() {
+    print_info "Running installer for $OS..."
+    
+    case "$OS" in
+        "windows")
+            if command -v pwsh &> /dev/null; then
+                pwsh -ExecutionPolicy Bypass -File install.ps1
+            elif command -v powershell &> /dev/null; then
+                powershell -ExecutionPolicy Bypass -File install.ps1
+            else
+                print_error "PowerShell not found"
+                exit 1
+            fi
+            ;;
+        "macos"|"linux")
+            chmod +x install.sh
+            ./install.sh
+            ;;
+        *)
+            print_error "Unsupported operating system: $OS"
+            exit 1
+            ;;
+    esac
+}
+
+show_manual_instructions() {
+    echo ""
+    echo -e "${YELLOW}Manual Installation Instructions:${NC}"
+    echo ""
+    
+    case "$OS" in
+        "windows")
+            echo "1. Download install.ps1"
+            echo "2. Right-click on install.ps1 and select 'Run with PowerShell'"
+            echo "   Or open PowerShell as Administrator and run:"
+            echo "   PS> Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser"
+            echo "   PS> .\\install.ps1"
+            ;;
+        "macos")
+            echo "1. Download install.sh"
+            echo "2. Open Terminal and navigate to the download directory"
+            echo "3. Run: chmod +x install.sh && ./install.sh"
+            echo ""
+            echo "Prerequisites for macOS:"
+            echo "• Xcode Command Line Tools: xcode-select --install"
+            echo "• Homebrew: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+            ;;
+        "linux")
+            echo "1. Download install.sh"
+            echo "2. Open terminal and navigate to the download directory"
+            echo "3. Run: chmod +x install.sh && ./install.sh"
+            echo ""
+            echo "Prerequisites for Linux:"
+            echo "• curl or wget"
+            echo "• sudo access for package installation"
+            ;;
+        *)
+            echo "Unsupported operating system detected."
+            echo "Please install manually using the setup guide."
+            ;;
+    esac
+    
+    echo ""
+    echo -e "${CYAN}System Requirements:${NC}"
+    echo "• 8GB+ RAM (recommended)"
+    echo "• 10GB+ free disk space"
+    echo "• Internet connection for downloads"
+    echo ""
+    echo -e "${CYAN}What will be installed:${NC}"
+    echo "• Node.js (18+)"
+    echo "• Rust toolchain"
+    echo "• Ollama (local LLM runtime)"
+    echo "• Python + ChromaDB (optional)"
+    echo "• LocalMind project files"
+    echo ""
+}
+
+main() {
+    print_header
+    
+    print_info "Detecting operating system..."
+    detect_os
+    
+    case "$OS" in
+        "windows")
+            print_info "Detected: Windows"
+            ;;
+        "macos")
+            print_info "Detected: macOS"
+            ;;
+        "linux")
+            print_info "Detected: Linux"
+            ;;
+        *)
+            print_error "Unknown or unsupported operating system: $OSTYPE"
+            show_manual_instructions
+            exit 1
+            ;;
+    esac
+    
+    check_dependencies
+    
+    if download_installer; then
+        echo ""
+        echo -e "${CYAN}Ready to install LocalMind AI Agent!${NC}"
+        echo -e "${YELLOW}This will install all dependencies and set up the project.${NC}"
+        echo ""
+        
+        read -p "Continue with automatic installation? (y/N): " -n 1 -r
+        echo
+        
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            run_installer
+        else
+            echo "Automatic installation cancelled."
+            show_manual_instructions
+        fi
+    else
+        show_manual_instructions
+    fi
+}
+
+# Trap errors
+trap 'print_error "Installation failed. Check the error messages above."' ERR
+
+# Run main function
+main "$@"
