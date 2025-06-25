@@ -1,44 +1,48 @@
 [package]
 name = "local-ai-agent"
 version = "0.1.0"
-description = "LocalMind AI Agent - Privacy-focused local AI with knowledge transfer"
-authors = ["LocalMind Team"]
-license = "MIT"
+description = "A Tauri App"
+authors = ["you"]
+license = ""
+repository = ""
+default-run = "local-ai-agent"
 edition = "2021"
+rust-version = "1.60"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]
-tauri-build = { version = "1.5", features = [] }
+tauri-build = { version = "1.0", features = [] }
 
 [dependencies]
-# Core Tauri dependencies
-tauri = { version = "1.5", features = ["api-all", "system-tray"] }
-serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+tauri = { version = "1.0", features = [
+    "api-all",
+    "dialog-all",
+    "fs-all",
+    "http-all",
+    "notification-all",
+    "os-all",
+    "path-all",
+    "process-all",
+    "shell-open",
+    "window-all",
+    "clipboard-all",
+    "global-shortcut-all"
+] }
 
-# Async runtime
+# Additional dependencies for LocalMind functionality
 tokio = { version = "1.0", features = ["full"] }
-
-# HTTP client for Ollama API
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
 reqwest = { version = "0.11", features = ["json"] }
 
-# UUID generation
-uuid = { version = "1.0", features = ["v4", "serde"] }
-
-# Date/time handling
-chrono = { version = "0.4", features = ["serde"] }
-
-# Error handling
-anyhow = "1.0"
-
-# File system utilities
-dirs = "5.0"
-
 [features]
-# This feature is used for production builds or when `devPath` points to the filesystem
+# by default Tauri runs in production mode
+# when `tauri dev` runs it is executed with `cargo run --no-default-features` if `devPath` is an URL
+default = ["custom-protocol"]
+# this feature is used for production builds or when `devPath` points to the filesystem
 # DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
-
-# Default features
-default = []

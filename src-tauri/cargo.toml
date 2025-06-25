@@ -12,8 +12,7 @@ tauri-build = { version = "1.5", features = [] }
 
 [dependencies]
 # Core Tauri framework
-tauri = { version = "1.5", features = [
-    "api-all", 
+tauri = { version = "1.5", features = [ "clipboard-all", "process-relaunch", "process-exit", "global-shortcut-all", "window-all", "http-request", 
     "system-tray", 
     "dialog-all", 
     "fs-all", 
