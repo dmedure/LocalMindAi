@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App";
+import App from "./app";
 import "./App.css";
 
 // Prevent context menu on production builds

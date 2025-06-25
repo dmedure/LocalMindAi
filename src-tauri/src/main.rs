@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use tauri::{Manager, State};
+use tauri::State;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -16,30 +16,52 @@ pub struct Agent {
     pub name: String,
     pub specialization: String,
     pub personality: String,
-    pub instructions: String,
-    pub created_at: String,
+    pub instructions: Option<String>,
+    pub created_at: String, // ISO 8601 format for JS compatibility
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub id: String,
-    pub agent_id: String,
-    pub role: String, // "user" or "assistant"
     pub content: String,
-    pub timestamp: String,
+    pub sender: String, // "user" or "agent"
+    pub timestamp: String, // ISO 8601 format for JS compatibility
+    pub agent_id: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SystemStatus {
-    pub ollama: String,
-    pub chromadb: String,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Document {
+    pub id: String,
+    pub name: String,
+    pub doc_type: String,
+    pub size: u64,
+    pub path: String,
+    pub summary: Option<String>,
+    pub indexed_at: String, // ISO 8601 format for JS compatibility
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceStatus {
+    pub ollama: bool,
+    pub chromadb: bool,
+}
+
+impl Default for ServiceStatus {
+    fn default() -> Self {
+        Self {
+            ollama: false,
+            chromadb: false,
+        }
+    }
 }
 
 // Application state
+#[derive(Debug)]
 pub struct AppState {
     pub agents: Mutex<Vec<Agent>>,
     pub messages: Mutex<HashMap<String, Vec<Message>>>, // agent_id -> messages
-    pub data_dir: PathBuf,
+    pub documents: Mutex<Vec<Document>>,
+    pub service_status: Mutex<ServiceStatus>, // Add this if needed
 }
 
 impl AppState {
@@ -54,7 +76,11 @@ impl AppState {
         Self {
             agents: Mutex::new(Vec::new()),
             messages: Mutex::new(HashMap::new()),
-            data_dir,
+            documents: Mutex::new(Vec::new()),
+            service_status: Mutex::new(ServiceStatus {
+                ollama: false,
+                chromadb: false,
+            }),
         }
     }
     
@@ -214,7 +240,9 @@ async fn send_message(
         agent_id: agent_id.clone(),
         role: "user".to_string(),
         content: message.clone(),
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        sender: "user".to_string(),
+        timestamp: Utc::now().to_rfc3339(),
+        agent_id: agent_id.clone(),
     };
     
     // Add user message to state
@@ -236,6 +264,9 @@ async fn send_message(
     // Create assistant message
     let assistant_message = Message {
         id: Uuid::new_v4().to_string(),
+        content: ai_response.clone(),
+        sender: "agent".to_string(),
+        timestamp: Utc::now().to_rfc3339(),
         agent_id: agent_id.clone(),
         role: "assistant".to_string(),
         content: ai_response.clone(),
@@ -306,16 +337,19 @@ async fn generate_ai_response(agent: &Agent, message: &str) -> Result<String, Bo
 }
 
 #[tauri::command]
-async fn check_system_status() -> Result<SystemStatus, String> {
-    println!("Checking system status...");
-    
+async fn check_service_status(state: State<'_, AppState>) -> Result<ServiceStatus, String> {
     let ollama_status = check_ollama_status().await;
     let chromadb_status = check_chromadb_status().await;
     
-    Ok(SystemStatus {
+    let status = ServiceStatus {
         ollama: ollama_status,
         chromadb: chromadb_status,
-    })
+    };
+    
+    // Update the state with the current status
+    *state.service_status.lock().await = status.clone();
+    
+    Ok(status)
 }
 
 async fn check_ollama_status() -> String {
@@ -360,7 +394,47 @@ async fn check_chromadb_status() -> String {
     }
 }
 
+#[tauri::command]
+async fn add_document() -> Result<(), String> {
+    // This would open a file dialog and process the selected document
+    // For now, we'll return a placeholder
+    Err("Document indexing not yet implemented".to_string())
+}
+
+#[tauri::command]
+async fn export_agent_knowledge(_agent_id: String) -> Result<(), String> {
+    // This would export the agent's knowledge to a file
+    // For now, we'll return a placeholder
+    Err("Knowledge export not yet implemented".to_string())
+}
+
+#[tauri::command]
+async fn import_agent_knowledge(_file_path: String) -> Result<(), String> {
+    // This would import knowledge from a file
+    // For now, we'll return a placeholder
+    Err("Knowledge import not yet implemented".to_string())
+}
+
+// Initialize the application state
+async fn initialize_app_state() -> AppState {
+    let state = AppState::new();
+    
+    // Load existing data
+    if let Ok(agents) = load_agents().await {
+        *state.agents.lock().await = agents;
+    }
+    
+    if let Ok(messages) = load_messages().await {
+        *state.messages.lock().await = messages;
+    }
+    
+    state
+}
+
 fn main() {
+    // Initialize application state
+    let app_state = tauri::async_runtime::block_on(initialize_app_state());
+    
     tauri::Builder::default()
         .manage(AppState::new())
         .setup(|_app| {

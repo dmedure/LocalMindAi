@@ -7,7 +7,7 @@
     "withGlobalTauri": false
   },
   "package": {
-    "productName": "LocalMind",
+    "productName": "LocalMind AI Agent",
     "version": "0.1.0"
   },
   "tauri": {
@@ -15,14 +15,42 @@
       "all": false,
       "shell": {
         "all": false,
-        "open": true
+        "open": true,
+        "execute": false,
+        "sidecar": false
       },
       "fs": {
         "all": true,
-        "scope": ["**"]
+        "readFile": true,
+        "writeFile": true,
+        "readDir": true,
+        "copyFile": true,
+        "createDir": true,
+        "removeDir": true,
+        "removeFile": true,
+        "renameFile": true,
+        "exists": true,
+        "scope": [
+          "**",
+          "$HOME/**",
+          "$DOCUMENT/**", 
+          "$DOWNLOAD/**",
+          "$DESKTOP/**",
+          "$PICTURE/**",
+          "$APPDATA/**",
+          "$APPLOCALDATA/**",
+          "$CACHE/**",
+          "$CONFIG/**",
+          "$DATA/**",
+          "$LOCALDATA/**",
+          "$TEMP/**"
+        ]
       },
       "dialog": {
         "all": true,
+        "ask": true,
+        "confirm": true,
+        "message": true,
         "open": true,
         "save": true
       },
@@ -34,6 +62,65 @@
       },
       "path": {
         "all": true
+      },
+      "process": {
+        "all": false,
+        "relaunch": true,
+        "exit": true
+      },
+      "clipboard": {
+        "all": true,
+        "readText": true,
+        "writeText": true
+      },
+      "globalShortcut": {
+        "all": true
+      },
+      "window": {
+        "all": true,
+        "create": true,
+        "center": true,
+        "requestUserAttention": true,
+        "setResizable": true,
+        "setTitle": true,
+        "maximize": true,
+        "unmaximize": true,
+        "minimize": true,
+        "unminimize": true,
+        "show": true,
+        "hide": true,
+        "close": true,
+        "setDecorations": true,
+        "setAlwaysOnTop": true,
+        "setContentProtected": false,
+        "setSize": true,
+        "setMinSize": true,
+        "setMaxSize": true,
+        "setPosition": true,
+        "setFullscreen": true,
+        "setFocus": true,
+        "setIcon": true,
+        "setSkipTaskbar": true,
+        "setCursorGrab": true,
+        "setCursorVisible": true,
+        "setCursorIcon": true,
+        "setCursorPosition": true,
+        "setIgnoreCursorEvents": true,
+        "startDragging": true,
+        "print": true
+      },
+      "http": {
+        "all": false,
+        "request": true,
+        "scope": [
+          "http://localhost:11434/**",
+          "http://localhost:8000/**",
+          "http://127.0.0.1:11434/**",
+          "http://127.0.0.1:8000/**",
+          "https://huggingface.co/**",
+          "https://raw.githubusercontent.com/**",
+          "https://api.github.com/**"
+        ]
       }
     },
     "bundle": {
@@ -46,10 +133,40 @@
         "icons/128x128@2x.png",
         "icons/icon.icns",
         "icons/icon.ico"
-      ]
+      ],
+      "resources": [],
+      "externalBin": [],
+      "copyright": "Copyright © 2024 LocalMind Team",
+      "category": "Productivity",
+      "shortDescription": "Privacy-focused local AI agent with robust management",
+      "longDescription": "LocalMind is a powerful, privacy-focused AI agent platform that runs entirely on your local machine. Create multiple specialized AI agents, manage documents, transfer knowledge, and maintain complete control over your data.",
+      "appimage": {
+        "bundleMediaFramework": false
+      },
+      "deb": {
+        "depends": []
+      },
+      "macOS": {
+        "frameworks": [],
+        "minimumSystemVersion": "10.13"
+      },
+      "windows": {
+        "certificateThumbprint": null,
+        "digestAlgorithm": "sha256",
+        "timestampUrl": "",
+        "tsp": false,
+        "wix": {
+          "language": "en-US"
+        },
+        "nsis": {
+          "displayLanguageSelector": false,
+          "installMode": "currentUser",
+          "languages": ["English"]
+        }
+      }
     },
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; connect-src 'self' http://localhost:11434 http://localhost:8000 http://127.0.0.1:11434 http://127.0.0.1:8000 https://huggingface.co https://raw.githubusercontent.com https://api.github.com; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: blob:; font-src 'self' data:; media-src 'self' file: blob:; worker-src 'self' blob:;"
     },
     "windows": [
       {
@@ -59,13 +176,34 @@
         "width": 1200,
         "height": 800,
         "minWidth": 800,
-        "minHeight": 600
+        "minHeight": 600,
+        "maxWidth": 2560,
+        "maxHeight": 1600,
+        "center": true,
+        "visible": true,
+        "transparent": false,
+        "decorations": true,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "theme": "Dark",
+        "titleBarStyle": "Visible",
+        "hiddenTitle": false,
+        "acceptFirstMouse": false,
+        "fileDropEnabled": true,
+        "focus": true,
+        "maximized": false,
+        "closable": true,
+        "minimizable": true,
+        "maximizable": true,
+        "contentProtected": false
       }
     ],
     "systemTray": {
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": true,
-      "menuOnLeftClick": false
-    }
+      "iconPath": "icons/icon.png"
+    },
+    "updater": {
+      "active": false
+    },
+    "macOSPrivateApi": false
   }
 }
