@@ -322,3 +322,5 @@ impl Agent {
         self.memory.user_preferences.get(key)
     }
 }
+
+broke it 
