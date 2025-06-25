@@ -3,129 +3,57 @@ use anyhow::{Result, anyhow};
 use std::path::Path;
 use std::fs;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-use crate::knowledge_transfer::{ExportOptions, MergeStrategy};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Document {
     pub id: String,
-    pub content: String,
-    pub source: String,
-    pub metadata: DocumentMetadata,
-    pub embedding: Option<Vec<f32>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DocumentMetadata {
     pub title: String,
-    pub file_type: String,
+    pub source: String,
+    pub content: String,
+    pub content_preview: String,
+    pub doc_type: String,
     pub size: u64,
-    pub created_at: DateTime<Utc>,
-    pub last_modified: DateTime<Utc>,
-    pub keywords: Vec<String>,
-    pub summary: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub metadata: HashMap<String, String>,
+    pub embedding: Option<Vec<f32>>,
+    pub categories: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ChromaCollection {
-    pub name: String,
-    pub id: String,
-    pub metadata: serde_json::Value,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ChromaAddRequest {
-    pub documents: Vec<String>,
-    pub metadatas: Vec<serde_json::Value>,
-    pub ids: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ChromaQueryRequest {
-    pub query_texts: Vec<String>,
-    pub n_results: usize,
-    pub include: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ChromaQueryResponse {
-    pub ids: Vec<Vec<String>>,
-    pub documents: Vec<Vec<String>>,
-    pub metadatas: Vec<Vec<serde_json::Value>>,
-    pub distances: Vec<Vec<f32>>,
+pub struct SearchResult {
+    pub document: Document,
+    pub score: f64,
+    pub snippet: String,
 }
 
 pub struct KnowledgeBase {
-    client: reqwest::Client,
-    base_url: String,
-    collection_name: String,
-    documents: Vec<Document>, // Local cache
+    documents: HashMap<String, Document>,
+    use_chroma: bool,
 }
 
 impl KnowledgeBase {
     pub async fn new() -> Result<Self> {
-        let client = reqwest::Client::new();
-        let base_url = "http://localhost:8000".to_string(); // Default ChromaDB port
-        let collection_name = "local_agent_docs".to_string();
+        // Try to connect to ChromaDB, fall back to local storage if not available
+        let use_chroma = Self::test_chroma_connection().await;
         
-        let mut kb = KnowledgeBase {
-            client,
-            base_url,
-            collection_name,
-            documents: Vec::new(),
-        };
-        
-        // Initialize collection
-        kb.ensure_collection().await?;
-        
-        Ok(kb)
-    }
-    
-    async fn ensure_collection(&self) -> Result<()> {
-        // Check if collection exists
-        let collections_url = format!("{}/api/v1/collections", self.base_url);
-        let response = self.client.get(&collections_url).send().await;
-        
-        match response {
-            Ok(resp) => {
-                let collections: Vec<ChromaCollection> = resp.json().await.unwrap_or_default();
-                let collection_exists = collections.iter()
-                    .any(|c| c.name == self.collection_name);
-                
-                if !collection_exists {
-                    self.create_collection().await?;
-                }
-            }
-            Err(_) => {
-                // ChromaDB might not be running, create a fallback
-                log::warn!("ChromaDB not available, using local storage only");
-            }
+        if use_chroma {
+            println!("Connected to ChromaDB for vector search");
+        } else {
+            println!("ChromaDB not available, using local text search");
         }
         
-        Ok(())
+        Ok(KnowledgeBase {
+            documents: HashMap::new(),
+            use_chroma,
+        })
     }
     
-    async fn create_collection(&self) -> Result<()> {
-        let create_url = format!("{}/api/v1/collections", self.base_url);
-        let payload = serde_json::json!({
-            "name": self.collection_name,
-            "metadata": {
-                "description": "Local AI Agent Documents"
-            }
-        });
-        
-        let response = self.client
-            .post(&create_url)
-            .json(&payload)
-            .send()
-            .await?;
-        
-        if !response.status().is_success() {
-            return Err(anyhow!("Failed to create ChromaDB collection"));
+    async fn test_chroma_connection() -> bool {
+        match reqwest::get("http://localhost:8000/api/v1/heartbeat").await {
+            Ok(response) => response.status().is_success(),
+            Err(_) => false,
         }
-        
-        Ok(())
     }
     
     pub async fn index_document(&mut self, file_path: &str) -> Result<String> {
@@ -136,278 +64,296 @@ impl KnowledgeBase {
         }
         
         // Read file content
-        let content = match path.extension().and_then(|e| e.to_str()) {
-            Some("txt") | Some("md") => fs::read_to_string(path)?,
-            Some("pdf") => {
-                // TODO: Implement PDF parsing
-                return Err(anyhow!("PDF parsing not yet implemented"));
-            }
-            Some("docx") => {
-                // TODO: Implement DOCX parsing
-                return Err(anyhow!("DOCX parsing not yet implemented"));
-            }
-            _ => fs::read_to_string(path)?, // Try as text
+        let content = fs::read_to_string(path)
+            .map_err(|e| anyhow!("Failed to read file: {}", e))?;
+        
+        // Extract metadata
+        let metadata = fs::metadata(path)
+            .map_err(|e| anyhow!("Failed to get file metadata: {}", e))?;
+        
+        let file_name = path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        
+        let doc_type = path.extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("unknown")
+            .to_uppercase();
+        
+        // Create content preview (first 200 characters)
+        let content_preview = if content.len() > 200 {
+            format!("{}...", &content[..200])
+        } else {
+            content.clone()
         };
         
         // Create document
-        let doc_id = Uuid::new_v4().to_string();
-        let metadata = std::fs::metadata(path)?;
-        
         let document = Document {
-            id: doc_id.clone(),
-            content: content.clone(),
+            id: Uuid::new_v4().to_string(),
+            title: file_name.clone(),
             source: file_path.to_string(),
-            metadata: DocumentMetadata {
-                title: path.file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string(),
-                file_type: path.extension()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string(),
-                size: metadata.len(),
-                created_at: Utc::now(),
-                last_modified: metadata.modified()
-                    .unwrap_or(std::time::SystemTime::now())
-                    .into(),
-                keywords: Vec::new(), // TODO: Extract keywords using LLM
-                summary: String::new(), // TODO: Generate summary using LLM
-            },
-            embedding: None,
+            content: content.clone(),
+            content_preview,
+            doc_type,
+            size: metadata.len(),
+            created_at: chrono::Utc::now(),
+            metadata: HashMap::new(),
+            embedding: None, // TODO: Generate embeddings if ChromaDB is available
+            categories: self.extract_categories(&content),
         };
         
-        // Add to ChromaDB if available
-        self.add_to_chroma(&document).await.ok(); // Don't fail if ChromaDB is unavailable
+        // Store document
+        self.documents.insert(document.id.clone(), document.clone());
         
-        // Add to local cache
-        self.documents.push(document);
-        
-        Ok(doc_id)
-    }
-    
-    async fn add_to_chroma(&self, document: &Document) -> Result<()> {
-        let add_url = format!("{}/api/v1/collections/{}/add", 
-            self.base_url, self.collection_name);
-        
-        let request = ChromaAddRequest {
-            documents: vec![document.content.clone()],
-            metadatas: vec![serde_json::to_value(&document.metadata)?],
-            ids: vec![document.id.clone()],
-        };
-        
-        let response = self.client
-            .post(&add_url)
-            .json(&request)
-            .send()
-            .await?;
-        
-        if !response.status().is_success() {
-            return Err(anyhow!("Failed to add document to ChromaDB"));
+        // Index in ChromaDB if available
+        if self.use_chroma {
+            self.index_in_chroma(&document).await?;
         }
         
-        Ok(())
+        Ok(document.id)
     }
     
     pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<Document>> {
-        // Try ChromaDB first
-        if let Ok(results) = self.search_chroma(query, limit).await {
-            return Ok(results);
+        if self.use_chroma {
+            self.search_with_chroma(query, limit).await
+        } else {
+            Ok(self.search_local(query, limit))
         }
-        
-        // Fallback to simple text search in local cache
-        let mut results = Vec::new();
+    }
+    
+    fn search_local(&self, query: &str, limit: usize) -> Vec<Document> {
         let query_lower = query.to_lowercase();
+        let mut results: Vec<(Document, f64)> = Vec::new();
         
-        for doc in &self.documents {
-            if doc.content.to_lowercase().contains(&query_lower) 
-                || doc.metadata.title.to_lowercase().contains(&query_lower) {
-                results.push(doc.clone());
-                if results.len() >= limit {
-                    break;
-                }
+        for document in self.documents.values() {
+            let title_score = if document.title.to_lowercase().contains(&query_lower) { 2.0 } else { 0.0 };
+            let content_score = self.calculate_content_score(&document.content, &query_lower);
+            let total_score = title_score + content_score;
+            
+            if total_score > 0.0 {
+                results.push((document.clone(), total_score));
             }
         }
         
-        Ok(results)
+        // Sort by score (highest first) and take top results
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        results.into_iter()
+            .take(limit)
+            .map(|(doc, _)| doc)
+            .collect()
     }
     
-    async fn search_chroma(&self, query: &str, limit: usize) -> Result<Vec<Document>> {
-        let query_url = format!("{}/api/v1/collections/{}/query", 
-            self.base_url, self.collection_name);
+    fn calculate_content_score(&self, content: &str, query: &str) -> f64 {
+        let content_lower = content.to_lowercase();
+        let query_words: Vec<&str> = query.split_whitespace().collect();
         
-        let request = ChromaQueryRequest {
-            query_texts: vec![query.to_string()],
-            n_results: limit,
-            include: vec!["documents".to_string(), "metadatas".to_string()],
-        };
-        
-        let response = self.client
-            .post(&query_url)
-            .json(&request)
-            .send()
-            .await?;
-        
-        if !response.status().is_success() {
-            return Err(anyhow!("ChromaDB query failed"));
-        }
-        
-        let query_response: ChromaQueryResponse = response.json().await?;
-        
-        let mut results = Vec::new();
-        if let (Some(docs), Some(metadatas)) = (
-            query_response.documents.first(),
-            query_response.metadatas.first()
-        ) {
-            for (i, content) in docs.iter().enumerate() {
-                if let Some(metadata_value) = metadatas.get(i) {
-                    if let Ok(metadata) = serde_json::from_value::<DocumentMetadata>(metadata_value.clone()) {
-                        results.push(Document {
-                            id: Uuid::new_v4().to_string(), // ChromaDB doesn't return IDs in this format
-                            content: content.clone(),
-                            source: metadata.title.clone(), // Use title as source for now
-                            metadata,
-                            embedding: None,
-                        });
-                    }
-                }
+        let mut score = 0.0;
+        for word in query_words {
+            if word.len() > 2 { // Skip very short words
+                let occurrences = content_lower.matches(word).count();
+                score += occurrences as f64 * word.len() as f64;
             }
         }
         
-        Ok(results)
-    }
-    
-    pub fn get_document_count(&self) -> usize {
-        self.documents.len()
-    }
-    
-    pub fn get_all_documents(&self) -> &[Document] {
-        &self.documents
-    }
-    
-    // Knowledge Transfer Methods
-    pub async fn export_knowledge(
-        &self, 
-        export_path: &str, 
-        options: ExportOptions
-    ) -> Result<String> {
-        let mut filtered_documents = Vec::new();
-        
-        // Filter documents by categories if specified
-        for doc in &self.documents {
-            if options.categories.is_empty() || 
-               options.categories.iter().any(|cat| 
-                   doc.metadata.keywords.contains(cat) || 
-                   doc.source.contains(cat)
-               ) {
-                filtered_documents.push(doc.clone());
-            }
-        }
-        
-        let export_data = serde_json::json!({
-            "version": "1.0",
-            "exported_at": Utc::now(),
-            "document_count": filtered_documents.len(),
-            "documents": filtered_documents,
-            "metadata": {
-                "collection_name": self.collection_name,
-                "export_options": options
-            }
-        });
-        
-        let json_string = if options.compress {
-            // TODO: Implement compression
-            serde_json::to_string_pretty(&export_data)?
+        // Normalize by content length
+        if content.len() > 0 {
+            score / (content.len() as f64).sqrt()
         } else {
-            serde_json::to_string_pretty(&export_data)?
-        };
-        
-        if options.encrypt {
-            // TODO: Implement encryption
-            fs::write(export_path, &json_string)?;
-        } else {
-            fs::write(export_path, &json_string)?;
+            0.0
         }
-        
-        Ok(format!("Exported {} documents to {}", filtered_documents.len(), export_path))
     }
     
-    pub async fn import_knowledge(
-        &mut self, 
-        import_path: &str, 
-        strategy: MergeStrategy
-    ) -> Result<String> {
-        let import_data: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(import_path)?
-        )?;
-        
-        let imported_documents: Vec<Document> = serde_json::from_value(
-            import_data["documents"].clone()
-        )?;
-        
-        let mut imported_count = 0;
-        
-        match strategy {
-            MergeStrategy::Replace => {
-                self.documents = imported_documents;
-                imported_count = self.documents.len();
-            },
-            MergeStrategy::Append => {
-                for doc in imported_documents {
-                    self.documents.push(doc);
-                    imported_count += 1;
-                }
-            },
-            MergeStrategy::Merge => {
-                for imported_doc in imported_documents {
-                    // Check if document already exists by source
-                    if let Some(existing_index) = self.documents.iter()
-                        .position(|d| d.source == imported_doc.source) {
-                        // Update existing document
-                        self.documents[existing_index] = imported_doc;
-                    } else {
-                        // Add new document
-                        self.documents.push(imported_doc);
-                    }
-                    imported_count += 1;
-                }
-            }
-        }
-        
-        // Re-index in ChromaDB if available
-        for doc in &self.documents[self.documents.len() - imported_count..] {
-            self.add_to_chroma(doc).await.ok();
-        }
-        
-        Ok(format!("Imported {} documents using {:?} strategy", imported_count, strategy))
+    async fn search_with_chroma(&self, query: &str, limit: usize) -> Result<Vec<Document>> {
+        // TODO: Implement ChromaDB vector search
+        // For now, fall back to local search
+        Ok(self.search_local(query, limit))
     }
     
-    pub fn get_conversation_count(&self) -> usize {
-        // TODO: Implement conversation tracking
-        0
+    async fn index_in_chroma(&self, document: &Document) -> Result<()> {
+        // TODO: Implement ChromaDB indexing
+        // This would involve:
+        // 1. Generate embeddings for document content
+        // 2. Store document and embeddings in ChromaDB
+        // 3. Handle any ChromaDB-specific metadata
+        Ok(())
     }
     
-    pub fn get_categories(&self) -> Vec<String> {
+    pub async fn get_all_documents(&self) -> Result<Vec<Document>> {
+        Ok(self.documents.values().cloned().collect())
+    }
+    
+    pub async fn get_document(&self, doc_id: &str) -> Result<Option<Document>> {
+        Ok(self.documents.get(doc_id).cloned())
+    }
+    
+    pub async fn delete_document(&mut self, doc_id: &str) -> Result<bool> {
+        let removed = self.documents.remove(doc_id).is_some();
+        
+        if removed && self.use_chroma {
+            self.delete_from_chroma(doc_id).await?;
+        }
+        
+        Ok(removed)
+    }
+    
+    async fn delete_from_chroma(&self, doc_id: &str) -> Result<()> {
+        // TODO: Implement ChromaDB deletion
+        Ok(())
+    }
+    
+    pub async fn get_document_count(&self) -> Result<usize> {
+        Ok(self.documents.len())
+    }
+    
+    pub async fn get_documents_by_category(&self, category: &str) -> Result<Vec<Document>> {
+        let documents: Vec<Document> = self.documents
+            .values()
+            .filter(|doc| doc.categories.contains(&category.to_string()))
+            .cloned()
+            .collect();
+        
+        Ok(documents)
+    }
+    
+    pub async fn get_categories(&self) -> Result<Vec<String>> {
         let mut categories = std::collections::HashSet::new();
         
-        for doc in &self.documents {
-            for keyword in &doc.metadata.keywords {
-                categories.insert(keyword.clone());
+        for document in self.documents.values() {
+            for category in &document.categories {
+                categories.insert(category.clone());
             }
         }
         
-        categories.into_iter().collect()
+        let mut category_list: Vec<String> = categories.into_iter().collect();
+        category_list.sort();
+        Ok(category_list)
     }
     
-    pub fn get_last_updated(&self) -> Option<DateTime<Utc>> {
-        self.documents.iter()
-            .map(|d| d.metadata.last_modified)
-            .max()
+    fn extract_categories(&self, content: &str) -> Vec<String> {
+        let mut categories = Vec::new();
+        let content_lower = content.to_lowercase();
+        
+        // Simple keyword-based category detection
+        let category_keywords = vec![
+            ("technical", vec!["code", "programming", "software", "algorithm", "database", "api", "function", "class", "variable"]),
+            ("business", vec!["meeting", "project", "client", "revenue", "strategy", "market", "sales", "customer"]),
+            ("research", vec!["study", "analysis", "data", "research", "experiment", "hypothesis", "conclusion", "methodology"]),
+            ("personal", vec!["personal", "private", "diary", "journal", "notes", "thoughts", "idea", "reminder"]),
+            ("work", vec!["work", "office", "task", "deadline", "colleague", "manager", "report", "presentation"]),
+        ];
+        
+        for (category, keywords) in category_keywords {
+            let mut matches = 0;
+            for keyword in keywords {
+                if content_lower.contains(keyword) {
+                    matches += 1;
+                }
+            }
+            
+            // If at least 2 keywords match, add the category
+            if matches >= 2 {
+                categories.push(category.to_string());
+            }
+        }
+        
+        // Default category if none detected
+        if categories.is_empty() {
+            categories.push("general".to_string());
+        }
+        
+        categories
     }
     
-    pub fn estimate_storage_size(&self) -> usize {
-        self.documents.iter()
-            .map(|d| d.content.len() + d.source.len())
-            .sum()
+    pub async fn export_documents(&self, categories: Option<Vec<String>>) -> Result<Vec<Document>> {
+        let documents = if let Some(cats) = categories {
+            self.documents
+                .values()
+                .filter(|doc| doc.categories.iter().any(|c| cats.contains(c)))
+                .cloned()
+                .collect()
+        } else {
+            self.documents.values().cloned().collect()
+        };
+        
+        Ok(documents)
+    }
+    
+    pub async fn import_documents(&mut self, documents: Vec<Document>) -> Result<usize> {
+        let mut imported_count = 0;
+        
+        for document in documents {
+            // Check if document already exists (by source path)
+            let exists = self.documents
+                .values()
+                .any(|existing| existing.source == document.source);
+            
+            if !exists {
+                self.documents.insert(document.id.clone(), document.clone());
+                
+                // Index in ChromaDB if available
+                if self.use_chroma {
+                    if let Err(e) = self.index_in_chroma(&document).await {
+                        println!("Warning: Failed to index document {} in ChromaDB: {}", document.id, e);
+                    }
+                }
+                
+                imported_count += 1;
+            }
+        }
+        
+        Ok(imported_count)
+    }
+    
+    pub async fn get_storage_stats(&self) -> Result<HashMap<String, serde_json::Value>> {
+        let mut stats = HashMap::new();
+        
+        let total_documents = self.documents.len();
+        let total_size: u64 = self.documents.values().map(|doc| doc.size).sum();
+        
+        let mut categories_count = HashMap::new();
+        for document in self.documents.values() {
+            for category in &document.categories {
+                *categories_count.entry(category.clone()).or_insert(0) += 1;
+            }
+        }
+        
+        let mut type_count = HashMap::new();
+        for document in self.documents.values() {
+            *type_count.entry(document.doc_type.clone()).or_insert(0) += 1;
+        }
+        
+        stats.insert("total_documents".to_string(), serde_json::Value::Number(serde_json::Number::from(total_documents)));
+        stats.insert("total_size_bytes".to_string(), serde_json::Value::Number(serde_json::Number::from(total_size)));
+        stats.insert("categories".to_string(), serde_json::to_value(categories_count)?);
+        stats.insert("document_types".to_string(), serde_json::to_value(type_count)?);
+        stats.insert("chroma_enabled".to_string(), serde_json::Value::Bool(self.use_chroma));
+        
+        Ok(stats)
+    }
+    
+    pub async fn clear_all_documents(&mut self) -> Result<usize> {
+        let count = self.documents.len();
+        self.documents.clear();
+        
+        // TODO: Clear ChromaDB collection if available
+        if self.use_chroma {
+            // self.clear_chroma_collection().await?;
+        }
+        
+        Ok(count)
+    }
+    
+    pub fn get_document_summary(&self, doc_id: &str) -> Option<String> {
+        self.documents.get(doc_id).map(|doc| {
+            format!(
+                "Document: {}\nType: {}\nSize: {} bytes\nCategories: {}\nPreview: {}",
+                doc.title,
+                doc.doc_type,
+                doc.size,
+                doc.categories.join(", "),
+                doc.content_preview
+            )
+        })
     }
 }

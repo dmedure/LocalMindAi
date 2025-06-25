@@ -14,7 +14,7 @@ tauri-build = { version = "1.5", features = [] }
 
 [dependencies]
 # Core Tauri dependencies
-tauri = { version = "1.5", features = [ "notification-all", "path-all", "dialog-all", "fs-all", "shell-open", "os-all", "system-tray"] }
+tauri = { version = "1.5", features = [ "process-relaunch", "shell-execute", "process-exit", "http-all", "notification-all", "path-all", "dialog-all", "fs-all", "shell-open", "os-all", "system-tray"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 

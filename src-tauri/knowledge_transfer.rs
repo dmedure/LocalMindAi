@@ -1,238 +1,203 @@
 use serde::{Deserialize, Serialize};
 use anyhow::{Result, anyhow};
-use std::fs;
 use std::path::Path;
-use chrono::{DateTime, Utc};
-use uuid::Uuid;
-use crate::knowledge::{Document, KnowledgeBase};
-use crate::agent::{Agent, AgentMemory, CompleteAgentExport};
+use std::fs;
+use crate::knowledge::{KnowledgeBase, Document};
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ExportOptions {
     pub categories: Vec<String>,
+    pub include_conversations: bool,
+    pub include_documents: bool,
     pub encrypt: bool,
-    pub anonymize_personal_data: bool,
-    pub include_source_files: bool,
-    pub compression: CompressionType,
-    pub compress: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum CompressionType {
-    None,
-    Gzip,
-    Zstd,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum MergeStrategy {
-    Replace,    // Replace all existing data
-    Append,     // Add new data without checking duplicates
-    Merge,      // Intelligent merge, updating existing and adding new
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct KnowledgePackage {
-    pub version: String,
-    pub package_id: String,
-    pub created_at: DateTime<Utc>,
-    pub source_agent: String,
-    pub target_domain: Option<String>,
-    pub documents: Vec<Document>,
-    pub agent_memory: Option<AgentMemory>,
     pub metadata: PackageMetadata,
+    pub documents: Vec<Document>,
+    pub conversations: Vec<ConversationExport>,
+    pub agent_configs: Vec<AgentConfigExport>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PackageMetadata {
-    pub description: String,
-    pub tags: Vec<String>,
-    pub document_count: usize,
-    pub total_size: usize,
-    pub compatibility_version: String,
+    pub version: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub package_type: String,
+    pub categories: Vec<String>,
+    pub total_documents: usize,
+    pub total_conversations: usize,
+    pub checksum: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct TransferStats {
-    pub documents_transferred: usize,
-    pub conversations_transferred: usize,
-    pub workflows_transferred: usize,
-    pub preferences_transferred: usize,
-    pub transfer_time_ms: u64,
+pub struct ConversationExport {
+    pub agent_id: String,
+    pub agent_name: String,
+    pub messages: Vec<MessageExport>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-pub struct KnowledgeTransfer {
-    pub temp_dir: String,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MessageExport {
+    pub role: String,
+    pub content: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
-impl Default for ExportOptions {
-    fn default() -> Self {
-        ExportOptions {
-            categories: Vec::new(),
-            encrypt: false,
-            anonymize_personal_data: true,
-            include_source_files: false,
-            compression: CompressionType::None,
-            compress: false,
-        }
-    }
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AgentConfigExport {
+    pub id: String,
+    pub name: String,
+    pub specialization: String,
+    pub personality: String,
+    pub system_prompt: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }
+
+pub struct KnowledgeTransfer;
 
 impl KnowledgeTransfer {
     pub fn new() -> Self {
-        KnowledgeTransfer {
-            temp_dir: "./temp_transfers".to_string(),
-        }
+        KnowledgeTransfer
     }
     
-    pub async fn create_knowledge_package(
+    pub async fn export_knowledge(
         &self,
         knowledge_base: &KnowledgeBase,
-        agent_memory: Option<&AgentMemory>,
+        export_path: &str,
         options: ExportOptions,
-    ) -> Result<KnowledgePackage> {
-        let package_id = Uuid::new_v4().to_string();
-        
-        // Filter documents based on categories
+    ) -> Result<()> {
+        // Get documents filtered by categories
         let documents = if options.categories.is_empty() {
-            knowledge_base.get_all_documents().to_vec()
+            knowledge_base.get_all_documents().await?
         } else {
-            knowledge_base.get_all_documents()
-                .iter()
-                .filter(|doc| {
-                    options.categories.iter().any(|cat| {
-                        doc.metadata.keywords.contains(cat) ||
-                        doc.source.contains(cat) ||
-                        doc.metadata.title.contains(cat)
-                    })
-                })
-                .cloned()
-                .collect()
+            let mut filtered_docs = Vec::new();
+            for category in &options.categories {
+                let mut category_docs = knowledge_base.get_documents_by_category(category).await?;
+                filtered_docs.append(&mut category_docs);
+            }
+            // Remove duplicates
+            filtered_docs.sort_by(|a, b| a.id.cmp(&b.id));
+            filtered_docs.dedup_by(|a, b| a.id == b.id);
+            filtered_docs
         };
         
-        let total_size = documents.iter()
-            .map(|d| d.content.len() + d.source.len())
-            .sum();
-        
+        // Create package metadata
         let metadata = PackageMetadata {
-            description: format!("Knowledge package with {} documents", documents.len()),
-            tags: options.categories.clone(),
-            document_count: documents.len(),
-            total_size,
-            compatibility_version: "1.0".to_string(),
+            version: "1.0.0".to_string(),
+            created_at: chrono::Utc::now(),
+            package_type: "knowledge_export".to_string(),
+            categories: options.categories.clone(),
+            total_documents: documents.len(),
+            total_conversations: 0, // TODO: Add conversation count
+            checksum: self.calculate_checksum(&documents)?,
         };
         
+        // Create knowledge package
         let package = KnowledgePackage {
-            version: "1.0".to_string(),
-            package_id,
-            created_at: Utc::now(),
-            source_agent: "local_agent".to_string(),
-            target_domain: None,
-            documents,
-            agent_memory: agent_memory.cloned(),
             metadata,
+            documents,
+            conversations: Vec::new(), // TODO: Export conversations if requested
+            agent_configs: Vec::new(), // TODO: Export agent configs if requested
         };
         
-        Ok(package)
-    }
-    
-    pub async fn save_package(
-        &self,
-        package: &KnowledgePackage,
-        file_path: &str,
-        options: &ExportOptions,
-    ) -> Result<String> {
-        let json_string = serde_json::to_string_pretty(package)?;
+        // Serialize and save
+        let json_data = serde_json::to_string_pretty(&package)?;
         
-        let final_content = if options.encrypt {
-            self.encrypt_content(&json_string).await?
+        if options.encrypt {
+            let encrypted_data = self.encrypt_data(&json_data)?;
+            fs::write(export_path, encrypted_data)?;
         } else {
-            json_string
-        };
+            fs::write(export_path, json_data)?;
+        }
         
-        fs::write(file_path, final_content)?;
-        
-        Ok(format!("Package saved to {} ({} documents)", 
-                  file_path, package.documents.len()))
+        println!("Exported {} documents to {}", package.documents.len(), export_path);
+        Ok(())
     }
     
-    pub async fn load_package(&self, file_path: &str) -> Result<KnowledgePackage> {
-        let content = fs::read_to_string(file_path)?;
-        
-        // Try to decrypt if needed (detect encrypted format)
-        let json_content = if content.starts_with("ENCRYPTED:") {
-            self.decrypt_content(&content).await?
-        } else {
-            content
-        };
-        
-        let package: KnowledgePackage = serde_json::from_str(&json_content)?;
-        Ok(package)
-    }
-    
-    pub async fn apply_package(
+    pub async fn import_knowledge(
         &self,
+        knowledge_base: &mut KnowledgeBase,
+        import_path: &str,
+        merge_strategy: &str,
+    ) -> Result<usize> {
+        // Read and decrypt if necessary
+        let file_content = fs::read_to_string(import_path)?;
+        let json_data = if self.is_encrypted(&file_content) {
+            self.decrypt_data(&file_content)?
+        } else {
+            file_content
+        };
+        
+        // Parse knowledge package
+        let package: KnowledgePackage = serde_json::from_str(&json_data)?;
+        
+        // Verify package integrity
+        self.verify_package(&package)?;
+        
+        // Import based on strategy
+        match merge_strategy {
+            "merge" => self.merge_import(knowledge_base, package).await,
+            "append" => self.append_import(knowledge_base, package).await,
+            "replace" => self.replace_import(knowledge_base, package).await,
+            _ => Err(anyhow!("Unknown merge strategy: {}", merge_strategy)),
+        }
+    }
+    
+    async fn merge_import(
+        &self,
+        knowledge_base: &mut KnowledgeBase,
         package: KnowledgePackage,
-        target_kb: &mut KnowledgeBase,
-        target_agent: Option<&mut Agent>,
-        strategy: MergeStrategy,
-    ) -> Result<TransferStats> {
-        let start_time = std::time::Instant::now();
-        let mut stats = TransferStats {
-            documents_transferred: 0,
-            conversations_transferred: 0,
-            workflows_transferred: 0,
-            preferences_transferred: 0,
-            transfer_time_ms: 0,
-        };
+    ) -> Result<usize> {
+        // Smart merge: Import new documents, update existing ones if newer
+        let mut imported_count = 0;
         
-        // Transfer documents
-        match strategy {
-            MergeStrategy::Replace => {
-                // This would require more complex logic to replace KB contents
-                return Err(anyhow!("Replace strategy not yet implemented for knowledge base"));
-            },
-            MergeStrategy::Append => {
-                for doc in package.documents {
-                    // Add document (this is a placeholder - would need to implement in KB)
-                    stats.documents_transferred += 1;
+        for document in package.documents {
+            // Check if document exists by source path
+            if let Ok(existing_doc) = knowledge_base.get_document(&document.id).await {
+                if let Some(existing) = existing_doc {
+                    // Compare timestamps and update if newer
+                    if document.created_at > existing.created_at {
+                        // Update existing document
+                        // TODO: Implement document update
+                        imported_count += 1;
+                    }
+                } else {
+                    // New document, import it
+                    knowledge_base.import_documents(vec![document]).await?;
+                    imported_count += 1;
                 }
-            },
-            MergeStrategy::Merge => {
-                for doc in package.documents {
-                    // Check for existing docs by source and merge intelligently
-                    stats.documents_transferred += 1;
-                }
+            } else {
+                // Import new document
+                knowledge_base.import_documents(vec![document]).await?;
+                imported_count += 1;
             }
         }
         
-        // Transfer agent memory if present
-        if let (Some(package_memory), Some(agent)) = (package.agent_memory, target_agent) {
-            match strategy {
-                MergeStrategy::Replace => {
-                    agent.import_memory(package_memory)?;
-                    stats.conversations_transferred = package_memory.conversation_history.len();
-                    stats.workflows_transferred = package_memory.custom_workflows.len();
-                    stats.preferences_transferred = package_memory.user_preferences.len();
-                },
-                MergeStrategy::Append | MergeStrategy::Merge => {
-                    // Merge workflows
-                    for workflow in package_memory.custom_workflows {
-                        agent.add_workflow(workflow);
-                        stats.workflows_transferred += 1;
-                    }
-                    
-                    // Merge preferences
-                    for (key, value) in package_memory.user_preferences {
-                        agent.update_preferences(key, value);
-                        stats.preferences_transferred += 1;
-                    }
-                }
-            }
-        }
-        
-        stats.transfer_time_ms = start_time.elapsed().as_millis() as u64;
-        Ok(stats)
+        Ok(imported_count)
+    }
+    
+    async fn append_import(
+        &self,
+        knowledge_base: &mut KnowledgeBase,
+        package: KnowledgePackage,
+    ) -> Result<usize> {
+        // Append only: Import all documents, skip duplicates
+        let imported_count = knowledge_base.import_documents(package.documents).await?;
+        Ok(imported_count)
+    }
+    
+    async fn replace_import(
+        &self,
+        knowledge_base: &mut KnowledgeBase,
+        package: KnowledgePackage,
+    ) -> Result<usize> {
+        // Replace all: Clear existing and import new
+        knowledge_base.clear_all_documents().await?;
+        let imported_count = knowledge_base.import_documents(package.documents).await?;
+        Ok(imported_count)
     }
     
     pub async fn create_specialized_agent(
@@ -240,110 +205,201 @@ impl KnowledgeTransfer {
         domain: &str,
         source_export_path: &str,
         target_path: &str,
-    ) -> Result<String> {
-        // Load the source package
-        let package = self.load_package(source_export_path).await?;
-        
-        // Filter documents relevant to the domain
-        let specialized_docs: Vec<Document> = package.documents
-            .into_iter()
-            .filter(|doc| {
-                doc.metadata.keywords.iter().any(|k| k.contains(domain)) ||
-                doc.content.to_lowercase().contains(&domain.to_lowercase()) ||
-                doc.metadata.title.to_lowercase().contains(&domain.to_lowercase())
-            })
-            .collect();
-        
-        // Create specialized package
-        let specialized_package = KnowledgePackage {
-            version: package.version,
-            package_id: Uuid::new_v4().to_string(),
-            created_at: Utc::now(),
-            source_agent: package.source_agent,
-            target_domain: Some(domain.to_string()),
-            documents: specialized_docs.clone(),
-            agent_memory: package.agent_memory,
-            metadata: PackageMetadata {
-                description: format!("Specialized agent for {}", domain),
-                tags: vec![domain.to_string()],
-                document_count: specialized_docs.len(),
-                total_size: specialized_docs.iter()
-                    .map(|d| d.content.len() + d.source.len())
-                    .sum(),
-                compatibility_version: "1.0".to_string(),
-            },
+    ) -> Result<()> {
+        // Read source package
+        let file_content = fs::read_to_string(source_export_path)?;
+        let json_data = if self.is_encrypted(&file_content) {
+            self.decrypt_data(&file_content)?
+        } else {
+            file_content
         };
         
+        let mut package: KnowledgePackage = serde_json::from_str(&json_data)?;
+        
+        // Filter documents relevant to the domain
+        package.documents = self.filter_documents_by_domain(&package.documents, domain)?;
+        
+        // Update metadata
+        package.metadata.package_type = format!("specialized_agent_{}", domain);
+        package.metadata.categories = vec![domain.to_string()];
+        package.metadata.total_documents = package.documents.len();
+        package.metadata.created_at = chrono::Utc::now();
+        package.metadata.checksum = self.calculate_checksum(&package.documents)?;
+        
+        // Create specialized agent config
+        let agent_config = AgentConfigExport {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: format!("{}Specialist", domain),
+            specialization: domain.to_string(),
+            personality: "Professional".to_string(),
+            system_prompt: self.create_domain_prompt(domain),
+            created_at: chrono::Utc::now(),
+        };
+        
+        package.agent_configs = vec![agent_config];
+        
         // Save specialized package
-        let options = ExportOptions::default();
-        self.save_package(&specialized_package, target_path, &options).await?;
+        let json_data = serde_json::to_string_pretty(&package)?;
+        fs::write(target_path, json_data)?;
         
-        Ok(format!("Created specialized {} agent with {} documents", 
-                  domain, specialized_docs.len()))
+        println!("Created specialized agent for {} with {} documents", domain, package.documents.len());
+        Ok(())
     }
     
-    pub async fn validate_package(&self, package: &KnowledgePackage) -> Result<Vec<String>> {
-        let mut warnings = Vec::new();
+    fn filter_documents_by_domain(&self, documents: &[Document], domain: &str) -> Result<Vec<Document>> {
+        let domain_lower = domain.to_lowercase();
+        let mut filtered = Vec::new();
         
-        // Check version compatibility
-        if package.version != "1.0" {
-            warnings.push(format!("Package version {} may not be compatible", package.version));
-        }
+        // Domain-specific keywords
+        let domain_keywords = match domain_lower.as_str() {
+            "coding" | "programming" => vec!["code", "programming", "software", "algorithm", "function", "class", "api", "debug"],
+            "research" => vec!["research", "study", "analysis", "data", "experiment", "hypothesis", "methodology", "findings"],
+            "writing" => vec!["writing", "content", "article", "blog", "story", "draft", "edit", "publish"],
+            "business" => vec!["business", "strategy", "market", "client", "revenue", "project", "meeting", "sales"],
+            _ => vec![&domain_lower],
+        };
         
-        // Check document integrity
-        for (i, doc) in package.documents.iter().enumerate() {
-            if doc.content.is_empty() {
-                warnings.push(format!("Document {} has empty content", i));
+        for document in documents {
+            let content_lower = document.content.to_lowercase();
+            let title_lower = document.title.to_lowercase();
+            
+            // Check if document is relevant to domain
+            let relevance_score = domain_keywords.iter()
+                .map(|keyword| {
+                    let title_matches = title_lower.matches(keyword).count() * 3; // Title matches are weighted more
+                    let content_matches = content_lower.matches(keyword).count();
+                    title_matches + content_matches
+                })
+                .sum::<usize>();
+            
+            // Include document if it has sufficient relevance
+            if relevance_score >= 2 || document.categories.iter().any(|cat| cat.to_lowercase().contains(&domain_lower)) {
+                filtered.push(document.clone());
             }
-            if doc.source.is_empty() {
-                warnings.push(format!("Document {} has no source", i));
+        }
+        
+        Ok(filtered)
+    }
+    
+    fn create_domain_prompt(&self, domain: &str) -> String {
+        match domain.to_lowercase().as_str() {
+            "coding" | "programming" => {
+                "You are a specialized programming assistant with expertise in software development, code review, debugging, and technical architecture. You provide clear, accurate coding solutions and explain complex programming concepts in an understandable way."
+            },
+            "research" => {
+                "You are a specialized research assistant focused on academic and professional research. You excel at data analysis, research methodology, source evaluation, and synthesizing complex information into clear insights."
+            },
+            "writing" => {
+                "You are a specialized writing assistant focused on content creation, editing, and creative writing. You help with writing techniques, grammar, style improvement, and various forms of written communication."
+            },
+            "business" => {
+                "You are a specialized business assistant focused on professional tasks, strategic planning, and organizational efficiency. You provide insights on business operations, management, and professional communication."
+            },
+            _ => {
+                &format!("You are a specialized assistant with deep expertise in {}. You provide knowledgeable, targeted assistance for {}-related tasks and questions.", domain, domain)
             }
-        }
-        
-        // Check metadata consistency
-        if package.metadata.document_count != package.documents.len() {
-            warnings.push("Document count mismatch in metadata".to_string());
-        }
-        
-        Ok(warnings)
+        }.to_string()
     }
     
-    async fn encrypt_content(&self, content: &str) -> Result<String> {
-        // TODO: Implement actual encryption
-        // For now, just prepend a marker
-        Ok(format!("ENCRYPTED:{}", content))
+    fn calculate_checksum(&self, documents: &[Document]) -> Result<String> {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        let mut hasher = DefaultHasher::new();
+        
+        for document in documents {
+            document.id.hash(&mut hasher);
+            document.content.hash(&mut hasher);
+            document.created_at.hash(&mut hasher);
+        }
+        
+        Ok(format!("{:x}", hasher.finish()))
     }
     
-    async fn decrypt_content(&self, encrypted_content: &str) -> Result<String> {
-        // TODO: Implement actual decryption
-        // For now, just remove the marker
-        if let Some(content) = encrypted_content.strip_prefix("ENCRYPTED:") {
-            Ok(content.to_string())
+    fn verify_package(&self, package: &KnowledgePackage) -> Result<()> {
+        // Verify checksum
+        let calculated_checksum = self.calculate_checksum(&package.documents)?;
+        if calculated_checksum != package.metadata.checksum {
+            return Err(anyhow!("Package checksum verification failed"));
+        }
+        
+        // Verify document count
+        if package.documents.len() != package.metadata.total_documents {
+            return Err(anyhow!("Document count mismatch in package"));
+        }
+        
+        Ok(())
+    }
+    
+    fn encrypt_data(&self, data: &str) -> Result<Vec<u8>> {
+        // Simple encryption placeholder - in production, use proper encryption
+        // For now, just return the data as bytes with a simple XOR
+        let key = b"localmind_key_123"; // In production, use proper key management
+        let mut encrypted = Vec::new();
+        
+        for (i, byte) in data.bytes().enumerate() {
+            encrypted.push(byte ^ key[i % key.len()]);
+        }
+        
+        Ok(encrypted)
+    }
+    
+    fn decrypt_data(&self, data: &str) -> Result<String> {
+        // Simple decryption placeholder - matches encrypt_data
+        let key = b"localmind_key_123";
+        let bytes = data.as_bytes();
+        let mut decrypted = Vec::new();
+        
+        for (i, &byte) in bytes.iter().enumerate() {
+            decrypted.push(byte ^ key[i % key.len()]);
+        }
+        
+        String::from_utf8(decrypted).map_err(|e| anyhow!("Decryption failed: {}", e))
+    }
+    
+    fn is_encrypted(&self, data: &str) -> bool {
+        // Simple check - in production, use proper encryption markers
+        // For now, assume it's encrypted if it contains non-printable characters
+        data.chars().any(|c| !c.is_ascii() || c.is_control())
+    }
+    
+    pub async fn get_export_preview(
+        &self,
+        knowledge_base: &KnowledgeBase,
+        categories: &[String],
+    ) -> Result<serde_json::Value> {
+        let documents = if categories.is_empty() {
+            knowledge_base.get_all_documents().await?
         } else {
-            Err(anyhow!("Invalid encrypted format"))
-        }
-    }
-    
-    pub fn estimate_transfer_time(&self, package: &KnowledgePackage) -> u64 {
-        // Rough estimation: 1ms per KB of data
-        (package.metadata.total_size / 1024) as u64
-    }
-    
-    pub fn get_package_summary(&self, package: &KnowledgePackage) -> String {
-        format!(
-            "Package: {} ({})\n\
-             Created: {}\n\
-             Documents: {}\n\
-             Size: {} bytes\n\
-             Domain: {}\n\
-             Tags: {}",
-            package.package_id,
-            package.metadata.description,
-            package.created_at.format("%Y-%m-%d %H:%M:%S"),
-            package.metadata.document_count,
-            package.metadata.total_size,
-            package.target_domain.as_deref().unwrap_or("General"),
-            package.metadata.tags.join(", ")
-        )
+            let mut filtered_docs = Vec::new();
+            for category in categories {
+                let mut category_docs = knowledge_base.get_documents_by_category(category).await?;
+                filtered_docs.append(&mut category_docs);
+            }
+            filtered_docs
+        };
+        
+        let total_size: u64 = documents.iter().map(|doc| doc.size).sum();
+        let doc_types: std::collections::HashMap<String, usize> = documents
+            .iter()
+            .fold(std::collections::HashMap::new(), |mut acc, doc| {
+                *acc.entry(doc.doc_type.clone()).or_insert(0) += 1;
+                acc
+            });
+        
+        Ok(serde_json::json!({
+            "total_documents": documents.len(),
+            "total_size_bytes": total_size,
+            "document_types": doc_types,
+            "categories": categories,
+            "preview": documents.iter().take(5).map(|doc| {
+                serde_json::json!({
+                    "title": doc.title,
+                    "type": doc.doc_type,
+                    "size": doc.size,
+                    "categories": doc.categories
+                })
+            }).collect::<Vec<_>>()
+        }))
     }
 }
