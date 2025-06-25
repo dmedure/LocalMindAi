@@ -1,0 +1,43 @@
+# LocalMind Tauri - Rust .gitignore
+
+# Rust Build Output
+target/
+Cargo.lock
+
+# Rust Backup Files
+**/*.rs.bk
+
+# Generated Files
+WixTools/
+
+# Tauri Build Artifacts
+gen/
+bundle/
+
+# Windows Build Artifacts
+*.exe
+*.msi
+
+# macOS Build Artifacts  
+*.app
+*.dmg
+
+# Linux Build Artifacts
+*.AppImage
+*.deb
+*.rpm
+
+# Debug Symbols
+*.pdb
+
+# Temporary Build Files
+.cargo/
+.rustc_info.json
+
+# IDE Generated Files (Rust)
+.idea/
+*.iml
+
+# OS Generated Files
+.DS_Store
+Thumbs.db

@@ -1,269 +1,180 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
-import { open } from '@tauri-apps/api/dialog';
-import { listen } from '@tauri-apps/api/event';
 import './App.css';
 
-interface ChatMessage {
+interface Agent {
   id: string;
-  content: string;
-  role: 'user' | 'assistant';
-  timestamp: string;
+  name: string;
+  specialization: string;
+  personality: string;
+  instructions?: string;
+  created_at: Date;
 }
 
-interface ChatResponse {
-  message: ChatMessage;
-  sources: string[];
+interface Message {
+  id: string;
+  content: string;
+  sender: 'user' | 'agent';
+  timestamp: Date;
+  agent_id: string;
 }
 
 interface Document {
   id: string;
-  content: string;
-  source: string;
-  metadata: {
-    title: string;
-    file_type: string;
-    size: number;
-    created_at: string;
-    keywords: string[];
-    summary: string;
-  };
-}
-
-interface SystemInfo {
-  os: string;
-  version: string;
-  total_memory: number;
-  available_memory: number;
-  cpu_count: number;
-  cpu_brand: string;
-}
-
-interface AgentStats {
-  documents_count: number;
-  total_conversations: number;
-  knowledge_categories: string[];
-  last_updated: string;
-  storage_size: number;
-}
-
-interface TransferStats {
-  documents_transferred: number;
-  conversations_transferred: number;
-  workflows_transferred: number;
-  preferences_transferred: number;
-  transfer_time_ms: number;
+  name: string;
+  type: string;
+  size: number;
+  path: string;
+  summary?: string;
+  indexed_at: Date;
 }
 
 function App() {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [ollamaStatus, setOllamaStatus] = useState<boolean | null>(null);
-  const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
+  // State management
+  const [currentView, setCurrentView] = useState<'welcome' | 'chat' | 'documents' | 'transfer' | 'system'>('welcome');
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [currentAgent, setCurrentAgent] = useState<Agent | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
-  const [agentStats, setAgentStats] = useState<AgentStats | null>(null);
-  const [activeTab, setActiveTab] = useState<'chat' | 'documents' | 'transfer' | 'system'>('chat');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [inputMessage, setInputMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [showCreateAgentModal, setShowCreateAgentModal] = useState(false);
+  const [showAgentDropdown, setShowAgentDropdown] = useState(false);
 
+  // Agent creation form state
+  const [newAgentName, setNewAgentName] = useState('');
+  const [newAgentSpecialization, setNewAgentSpecialization] = useState('general');
+  const [newAgentPersonality, setNewAgentPersonality] = useState('');
+  const [newAgentInstructions, setNewAgentInstructions] = useState('');
+
+  // Service status
+  const [ollamaStatus, setOllamaStatus] = useState<'online' | 'offline' | 'unknown'>('unknown');
+  const [chromaStatus, setChromaStatus] = useState<'online' | 'offline' | 'unknown'>('unknown');
+
+  // Load agents and check service status on startup
   useEffect(() => {
-    checkOllamaStatus();
-    getSystemInfo();
-    getAgentStats();
-    
-    // Add welcome message
-    const welcomeMessage: ChatMessage = {
-      id: 'welcome',
-      content: 'Hello! I\'m your local AI assistant. I can help you with documents, answer questions, and assist with various tasks. How can I help you today?',
-      role: 'assistant',
-      timestamp: new Date().toISOString(),
-    };
-    setMessages([welcomeMessage]);
+    loadAgents();
+    checkServiceStatus();
   }, []);
 
+  // Load messages when agent changes
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  const checkOllamaStatus = async () => {
-    try {
-      const status = await invoke<boolean>('check_ollama_status');
-      setOllamaStatus(status);
-    } catch (error) {
-      console.error('Failed to check Ollama status:', error);
-      setOllamaStatus(false);
+    if (currentAgent) {
+      loadMessagesForAgent(currentAgent.id);
     }
-  };
+  }, [currentAgent]);
 
-  const getAgentStats = async () => {
+  const loadAgents = async () => {
     try {
-      const stats = await invoke<AgentStats>('get_agent_stats');
-      setAgentStats(stats);
-    } catch (error) {
-      console.error('Failed to get agent stats:', error);
-    }
-  };
-
-  const exportKnowledge = async (categories: string[], encrypt: boolean) => {
-    try {
-      const exportPath = await open({
-        defaultPath: 'knowledge_export.json',
-        filters: [{
-          name: 'JSON Files',
-          extensions: ['json']
-        }]
-      });
-
-      if (exportPath && typeof exportPath === 'string') {
-        setIsLoading(true);
-        const result = await invoke<string>('export_agent_knowledge', {
-          categories,
-          exportPath,
-          encrypt,
-        });
-        
-        alert(result);
-        await getAgentStats(); // Refresh stats
+      const agentList = await invoke<Agent[]>('get_agents');
+      setAgents(agentList);
+      
+      // If no agents exist, show welcome screen
+      if (agentList.length === 0) {
+        setCurrentView('welcome');
+      } else if (!currentAgent) {
+        // Select first agent if none selected
+        setCurrentAgent(agentList[0]);
+        setCurrentView('chat');
       }
     } catch (error) {
-      console.error('Failed to export knowledge:', error);
-      alert(`Failed to export knowledge: ${error}`);
-    } finally {
-      setIsLoading(false);
+      console.error('Failed to load agents:', error);
     }
   };
 
-  const importKnowledge = async (mergeStrategy: string) => {
+  const loadMessagesForAgent = async (agentId: string) => {
     try {
-      const importPath = await open({
-        filters: [{
-          name: 'JSON Files',
-          extensions: ['json']
-        }]
-      });
-
-      if (importPath && typeof importPath === 'string') {
-        setIsLoading(true);
-        const result = await invoke<string>('import_agent_knowledge', {
-          importPath,
-          mergeStrategy,
-        });
-        
-        alert(result);
-        await getAgentStats(); // Refresh stats
-        await searchDocuments(''); // Refresh documents
-      }
+      const agentMessages = await invoke<Message[]>('get_agent_messages', { agentId });
+      setMessages(agentMessages);
     } catch (error) {
-      console.error('Failed to import knowledge:', error);
-      alert(`Failed to import knowledge: ${error}`);
-    } finally {
-      setIsLoading(false);
+      console.error('Failed to load messages:', error);
+      setMessages([]);
     }
   };
 
-  const exportCompleteAgent = async () => {
+  const checkServiceStatus = async () => {
     try {
-      const exportPath = await open({
-        defaultPath: 'complete_agent_export.json',
-        filters: [{
-          name: 'JSON Files',
-          extensions: ['json']
-        }]
-      });
-
-      if (exportPath && typeof exportPath === 'string') {
-        setIsLoading(true);
-        const result = await invoke<string>('export_complete_agent', {
-          exportPath,
-        });
-        
-        alert(result);
-      }
+      const status = await invoke<{ollama: boolean, chromadb: boolean}>('check_service_status');
+      setOllamaStatus(status.ollama ? 'online' : 'offline');
+      setChromaStatus(status.chromadb ? 'online' : 'offline');
     } catch (error) {
-      console.error('Failed to export complete agent:', error);
-      alert(`Failed to export complete agent: ${error}`);
-    } finally {
-      setIsLoading(false);
+      console.error('Failed to check service status:', error);
     }
   };
 
-  const createSpecializedAgent = async (domain: string) => {
+  const createAgent = async () => {
+    if (!newAgentName.trim()) {
+      alert('Please enter an agent name');
+      return;
+    }
+
     try {
-      const sourceExportPath = await open({
-        filters: [{
-          name: 'JSON Files',
-          extensions: ['json']
-        }]
-      });
+      const agent: Agent = {
+        id: crypto.randomUUID(),
+        name: newAgentName,
+        specialization: newAgentSpecialization,
+        personality: newAgentPersonality || 'friendly',
+        instructions: newAgentInstructions,
+        created_at: new Date()
+      };
 
-      if (!sourceExportPath || typeof sourceExportPath !== 'string') return;
-
-      const targetPath = await open({
-        defaultPath: `${domain}_agent.json`,
-        filters: [{
-          name: 'JSON Files',
-          extensions: ['json']
-        }]
-      });
-
-      if (targetPath && typeof targetPath === 'string') {
-        setIsLoading(true);
-        const result = await invoke<string>('create_specialized_agent', {
-          domain,
-          sourceExportPath,
-          targetPath,
-        });
-        
-        alert(result);
-      }
+      await invoke('create_agent', { agent });
+      await loadAgents();
+      
+      // Select the new agent and switch to chat
+      setCurrentAgent(agent);
+      setCurrentView('chat');
+      
+      // Reset form and close modal
+      setNewAgentName('');
+      setNewAgentSpecialization('general');
+      setNewAgentPersonality('');
+      setNewAgentInstructions('');
+      setShowCreateAgentModal(false);
     } catch (error) {
-      console.error('Failed to create specialized agent:', error);
-      alert(`Failed to create specialized agent: ${error}`);
-    } finally {
-      setIsLoading(false);
+      console.error('Failed to create agent:', error);
+      alert('Failed to create agent. Please try again.');
     }
   };
 
-  const getSystemInfo = async () => {
-    try {
-      const info = await invoke<SystemInfo>('get_system_info');
-      setSystemInfo(info);
-    } catch (error) {
-      console.error('Failed to get system info:', error);
-    }
-  };
+  const sendMessage = async () => {
+    if (!inputMessage.trim() || !currentAgent || isLoading) return;
 
-  const handleSendMessage = async () => {
-    if (!input.trim() || isLoading) return;
-
-    const userMessage: ChatMessage = {
-      id: Date.now().toString(),
-      content: input,
-      role: 'user',
-      timestamp: new Date().toISOString(),
+    const userMessage: Message = {
+      id: crypto.randomUUID(),
+      content: inputMessage.trim(),
+      sender: 'user',
+      timestamp: new Date(),
+      agent_id: currentAgent.id
     };
 
     setMessages(prev => [...prev, userMessage]);
-    setInput('');
+    setInputMessage('');
     setIsLoading(true);
 
     try {
-      const response = await invoke<ChatResponse>('send_message', {
-        content: input,
+      const response = await invoke<string>('send_message_to_agent', {
+        agentId: currentAgent.id,
+        message: inputMessage.trim()
       });
 
-      setMessages(prev => [...prev, response.message]);
+      const agentMessage: Message = {
+        id: crypto.randomUUID(),
+        content: response,
+        sender: 'agent',
+        timestamp: new Date(),
+        agent_id: currentAgent.id
+      };
+
+      setMessages(prev => [...prev, agentMessage]);
     } catch (error) {
       console.error('Failed to send message:', error);
-      const errorMessage: ChatMessage = {
-        id: Date.now().toString(),
-        content: `Sorry, I encountered an error: ${error}`,
-        role: 'assistant',
-        timestamp: new Date().toISOString(),
+      const errorMessage: Message = {
+        id: crypto.randomUUID(),
+        content: 'Sorry, I encountered an error processing your message. Please try again.',
+        sender: 'agent',
+        timestamp: new Date(),
+        agent_id: currentAgent.id
       };
       setMessages(prev => [...prev, errorMessage]);
     } finally {
@@ -271,114 +182,180 @@ function App() {
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage();
-    }
+  const selectAgent = (agent: Agent) => {
+    setCurrentAgent(agent);
+    setCurrentView('chat');
+    setShowAgentDropdown(false);
   };
 
-  const handleIndexDocument = async () => {
-    try {
-      const selected = await open({
-        multiple: false,
-        filters: [{
-          name: 'Documents',
-          extensions: ['txt', 'md', 'pdf', 'docx', 'doc']
-        }]
-      });
+  const getAgentIntroduction = (agent: Agent) => {
+    const introductions = {
+      work: `I'm your professional assistant, specialized in handling work tasks, project management, and business communications. I have access to your work documents and can help you stay organized and productive.`,
+      coding: `I'm your coding companion! I specialize in programming, code review, debugging, and technical documentation. I can help you with any development challenges you're facing.`,
+      research: `I'm your research assistant, focused on academic work, data analysis, and in-depth investigation. I can help you find information, analyze data, and organize your research.`,
+      writing: `I'm your writing partner! I specialize in content creation, editing, brainstorming, and helping you communicate effectively through written word.`,
+      personal: `I'm your personal assistant, here to help with daily tasks, organization, scheduling, and anything else you need to manage your personal life.`,
+      creative: `I'm your creative companion! I specialize in brainstorming, artistic projects, design thinking, and helping you explore your creative potential.`,
+      technical: `I'm your technical support specialist, focused on troubleshooting, system administration, and helping you with technical challenges.`,
+      general: `I'm your general assistant, ready to help with a wide variety of tasks and questions. I adapt to your needs and learn from our conversations.`
+    };
 
-      if (selected && typeof selected === 'string') {
-        setIsLoading(true);
-        const result = await invoke<string>('index_document', {
-          filePath: selected,
-        });
-        
-        alert(result);
-        
-        // Refresh documents list
-        await searchDocuments('');
-      }
-    } catch (error) {
-      console.error('Failed to index document:', error);
-      alert(`Failed to index document: ${error}`);
-    } finally {
-      setIsLoading(false);
-    }
+    return introductions[agent.specialization as keyof typeof introductions] || introductions.general;
   };
 
-  const searchDocuments = async (query: string) => {
-    try {
-      const results = await invoke<Document[]>('search_documents', {
-        query,
-        limit: 20,
-      });
-      setDocuments(results);
-    } catch (error) {
-      console.error('Failed to search documents:', error);
-    }
-  };
-
-  const formatFileSize = (bytes: number) => {
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    if (bytes === 0) return '0 Bytes';
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
-  };
-
-  const formatMemory = (bytes: number) => {
-    return Math.round(bytes / 1024 / 1024 / 1024 * 100) / 100 + ' GB';
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
   return (
     <div className="app">
-      <header className="app-header">
-        <h1>🤖 Local AI Agent</h1>
-        <div className="status-indicators">
-          <div className={`status ${ollamaStatus ? 'online' : 'offline'}`}>
-            Ollama: {ollamaStatus ? 'Online' : 'Offline'}
+      {/* Header */}
+      <div className="app-header">
+        <h1>🧠 LocalMind AI Agent</h1>
+        <div className="header-controls">
+          <div className="status-indicators">
+            <div className={`status ${ollamaStatus}`}>
+              Ollama: {ollamaStatus === 'online' ? 'Online' : 'Offline'}
+            </div>
+            <div className={`status ${chromaStatus}`}>
+              ChromaDB: {chromaStatus === 'online' ? 'Connected' : 'Disconnected'}
+            </div>
           </div>
+          
+          {agents.length > 0 && (
+            <div className="agent-selector">
+              <div className="agent-menu">
+                <div 
+                  className="current-agent" 
+                  onClick={() => setShowAgentDropdown(!showAgentDropdown)}
+                >
+                  {currentAgent ? currentAgent.name : 'Select Agent'} ▼
+                </div>
+                {showAgentDropdown && (
+                  <div className="agent-dropdown">
+                    {agents.map(agent => (
+                      <div 
+                        key={agent.id}
+                        className="agent-option"
+                        onClick={() => selectAgent(agent)}
+                      >
+                        {getAgentIcon(agent.specialization)} {agent.name}
+                        <span className="agent-spec">({agent.specialization})</span>
+                      </div>
+                    ))}
+                    <hr />
+                    <div 
+                      className="agent-option"
+                      onClick={() => setShowCreateAgentModal(true)}
+                    >
+                      ➕ Create New Agent
+                    </div>
+                  </div>
+                )}
+              </div>
+              <button 
+                className="create-agent-btn"
+                onClick={() => setShowCreateAgentModal(true)}
+              >
+                + New Agent
+              </button>
+            </div>
+          )}
         </div>
-      </header>
+      </div>
 
-      <nav className="tab-navigation">
-        <button 
-          className={activeTab === 'chat' ? 'active' : ''}
-          onClick={() => setActiveTab('chat')}
-        >
-          💬 Chat
-        </button>
-        <button 
-          className={activeTab === 'documents' ? 'active' : ''}
-          onClick={() => setActiveTab('documents')}
-        >
-          📄 Documents
-        </button>
-        <button 
-          className={activeTab === 'transfer' ? 'active' : ''}
-          onClick={() => setActiveTab('transfer')}
-        >
-          🔄 Transfer
-        </button>
-        <button 
-          className={activeTab === 'system' ? 'active' : ''}
-          onClick={() => setActiveTab('system')}
-        >
-          ⚙️ System
-        </button>
-      </nav>
+      {/* Navigation - only show if we have agents */}
+      {agents.length > 0 && currentAgent && (
+        <div className="tab-navigation">
+          <button 
+            className={currentView === 'chat' ? 'active' : ''}
+            onClick={() => setCurrentView('chat')}
+          >
+            💬 Chat
+          </button>
+          <button 
+            className={currentView === 'documents' ? 'active' : ''}
+            onClick={() => setCurrentView('documents')}
+          >
+            📄 Documents
+          </button>
+          <button 
+            className={currentView === 'transfer' ? 'active' : ''}
+            onClick={() => setCurrentView('transfer')}
+          >
+            🔄 Transfer
+          </button>
+          <button 
+            className={currentView === 'system' ? 'active' : ''}
+            onClick={() => setCurrentView('system')}
+          >
+            ⚙️ System
+          </button>
+        </div>
+      )}
 
-      <main className="main-content">
-        {activeTab === 'chat' && (
+      {/* Main Content */}
+      <div className="main-content">
+        {/* Welcome Screen */}
+        {currentView === 'welcome' && (
+          <div className="welcome-screen">
+            <h2>Welcome to LocalMind!</h2>
+            <p>
+              Create your first AI agent to get started. Each agent can have its own personality, 
+              specialization, and knowledge base - all running privately on your device.
+            </p>
+            <button 
+              className="get-started-btn"
+              onClick={() => setShowCreateAgentModal(true)}
+            >
+              Create Your First Agent
+            </button>
+            
+            <div className="agent-ideas">
+              <h3>Agent Ideas:</h3>
+              <div className="ideas-grid">
+                <div>
+                  <strong>💼 Work Assistant</strong>
+                  <p>Handle emails, meetings, project management</p>
+                </div>
+                <div>
+                  <strong>💻 Coding Buddy</strong>
+                  <p>Code review, debugging, documentation</p>
+                </div>
+                <div>
+                  <strong>🔬 Research Helper</strong>
+                  <p>Academic research, data analysis</p>
+                </div>
+                <div>
+                  <strong>📝 Writing Partner</strong>
+                  <p>Content creation, editing, brainstorming</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Chat Interface */}
+        {currentView === 'chat' && currentAgent && (
           <div className="chat-container">
+            <div className="agent-intro">
+              <h3>👋 Hello! I'm {currentAgent.name}</h3>
+              <p>{getAgentIntroduction(currentAgent)}</p>
+              {currentAgent.instructions && (
+                <div className="custom-instructions">
+                  <strong>Special Focus:</strong> {currentAgent.instructions}
+                </div>
+              )}
+            </div>
+
             <div className="messages">
               {messages.map((message) => (
-                <div key={message.id} className={`message ${message.role}`}>
+                <div key={message.id} className={`message ${message.sender}`}>
                   <div className="message-content">
                     {message.content}
                   </div>
                   <div className="message-time">
-                    {new Date(message.timestamp).toLocaleTimeString()}
+                    {formatTime(message.timestamp)}
                   </div>
                 </div>
               ))}
@@ -393,21 +370,24 @@ function App() {
                   </div>
                 </div>
               )}
-              <div ref={messagesEndRef} />
             </div>
-            
+
             <div className="input-container">
               <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="Type your message here..."
-                disabled={isLoading || !ollamaStatus}
-                rows={3}
+                value={inputMessage}
+                onChange={(e) => setInputMessage(e.target.value)}
+                placeholder={`Ask ${currentAgent.name} anything...`}
+                rows={2}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                  }
+                }}
               />
               <button 
-                onClick={handleSendMessage}
-                disabled={isLoading || !ollamaStatus || !input.trim()}
+                onClick={sendMessage} 
+                disabled={!inputMessage.trim() || isLoading}
               >
                 Send
               </button>
@@ -415,38 +395,38 @@ function App() {
           </div>
         )}
 
-        {activeTab === 'documents' && (
+        {/* Documents Tab */}
+        {currentView === 'documents' && (
           <div className="documents-container">
             <div className="documents-header">
-              <button onClick={handleIndexDocument} disabled={isLoading}>
+              <button onClick={() => invoke('add_document')}>
                 📁 Add Document
               </button>
               <input
-                type="text"
-                placeholder="Search documents..."
-                onChange={(e) => searchDocuments(e.target.value)}
                 className="search-input"
+                placeholder="Search your indexed documents..."
               />
             </div>
-            
             <div className="documents-list">
               {documents.length === 0 ? (
                 <div className="empty-state">
                   <p>No documents indexed yet.</p>
-                  <p>Click "Add Document" to get started!</p>
+                  <p>Add some documents to get started!</p>
                 </div>
               ) : (
                 documents.map((doc) => (
                   <div key={doc.id} className="document-card">
                     <div className="doc-header">
-                      <h3>{doc.metadata.title}</h3>
-                      <span className="doc-type">{doc.metadata.file_type}</span>
+                      <h3>{doc.name}</h3>
+                      <div className="doc-type">{doc.type}</div>
                     </div>
                     <div className="doc-details">
-                      <p>Size: {formatFileSize(doc.metadata.size)}</p>
-                      <p>Source: {doc.source}</p>
-                      {doc.metadata.summary && (
-                        <p className="doc-summary">{doc.metadata.summary}</p>
+                      <p><strong>Size:</strong> {formatFileSize(doc.size)}</p>
+                      <p><strong>Indexed:</strong> {formatTime(doc.indexed_at)}</p>
+                      {doc.summary && (
+                        <div className="doc-summary">
+                          {doc.summary}
+                        </div>
                       )}
                     </div>
                   </div>
@@ -456,215 +436,207 @@ function App() {
           </div>
         )}
 
-        {activeTab === 'transfer' && (
+        {/* Transfer Tab */}
+        {currentView === 'transfer' && (
           <div className="transfer-container">
             <div className="transfer-section">
-              <h2>📤 Export Knowledge</h2>
+              <h2>📤 Export Agent Knowledge</h2>
+              <p>Export your agent's knowledge for backup or sharing</p>
               <div className="transfer-actions">
-                <div className="action-group">
-                  <h3>Export by Category</h3>
-                  <div className="category-export">
-                    <div className="category-tags">
-                      {agentStats?.knowledge_categories.map(category => (
-                        <label key={category} className="category-tag">
-                          <input type="checkbox" value={category} />
-                          <span>{category}</span>
-                        </label>
-                      ))}
-                    </div>
-                    <div className="export-options">
-                      <label>
-                        <input type="checkbox" />
-                        Encrypt Export
-                      </label>
-                    </div>
-                    <button 
-                      onClick={() => {
-                        const selectedCategories = Array.from(
-                          document.querySelectorAll('.category-tag input:checked')
-                        ).map(input => (input as HTMLInputElement).value);
-                        const encrypt = (document.querySelector('.export-options input') as HTMLInputElement)?.checked || false;
-                        exportKnowledge(selectedCategories, encrypt);
-                      }}
-                      disabled={isLoading}
-                    >
-                      Export Selected Categories
-                    </button>
-                  </div>
-                </div>
-                
-                <div className="action-group">
-                  <h3>Complete Agent Export</h3>
-                  <p>Export everything: documents, conversations, preferences, and workflows</p>
-                  <button 
-                    onClick={exportCompleteAgent}
-                    disabled={isLoading}
-                    className="primary-action"
-                  >
-                    Export Complete Agent
-                  </button>
-                </div>
+                <button className="primary-action">
+                  Export {currentAgent?.name} Knowledge
+                </button>
               </div>
             </div>
 
             <div className="transfer-section">
               <h2>📥 Import Knowledge</h2>
-              <div className="transfer-actions">
-                <div className="action-group">
-                  <h3>Import Strategy</h3>
-                  <div className="import-strategies">
-                    <button 
-                      onClick={() => importKnowledge('merge')}
-                      disabled={isLoading}
-                    >
-                      Smart Merge
-                    </button>
-                    <button 
-                      onClick={() => importKnowledge('append')}
-                      disabled={isLoading}
-                    >
-                      Add New Only
-                    </button>
-                    <button 
-                      onClick={() => importKnowledge('replace')}
-                      disabled={isLoading}
-                      className="warning-action"
-                    >
-                      Replace All
-                    </button>
-                  </div>
-                  <div className="strategy-descriptions">
-                    <small>
-                      <strong>Smart Merge:</strong> Updates existing, adds new<br/>
-                      <strong>Add New Only:</strong> Appends without checking duplicates<br/>
-                      <strong>Replace All:</strong> ⚠️ Completely replaces current knowledge
-                    </small>
-                  </div>
-                </div>
+              <div className="import-strategies">
+                <button>Smart Merge</button>
+                <button>Append Only</button>
+                <button className="warning-action">Replace All</button>
+              </div>
+              <div className="strategy-descriptions">
+                <small>
+                  Smart Merge: Intelligently combines knowledge without conflicts<br/>
+                  Append Only: Adds new knowledge without overwriting existing<br/>
+                  Replace All: Completely replaces current knowledge
+                </small>
               </div>
             </div>
 
             <div className="transfer-section">
-              <h2>🎯 Specialized Agents</h2>
-              <div className="transfer-actions">
-                <div className="action-group">
-                  <h3>Create Domain-Specific Agent</h3>
-                  <div className="specialized-creation">
-                    <input 
-                      type="text" 
-                      placeholder="Enter domain (e.g., 'coding', 'writing', 'research')"
-                      id="domain-input"
-                      className="domain-input"
-                    />
-                    <button 
-                      onClick={() => {
-                        const domain = (document.getElementById('domain-input') as HTMLInputElement)?.value;
-                        if (domain) {
-                          createSpecializedAgent(domain);
-                        }
-                      }}
-                      disabled={isLoading}
-                    >
-                      Create Specialized Agent
-                    </button>
-                  </div>
-                  <p className="help-text">
-                    Creates a focused agent with only knowledge relevant to the specified domain
-                  </p>
-                </div>
+              <h2>🎯 Create Specialized Agent</h2>
+              <div className="specialized-creation">
+                <input
+                  className="domain-input"
+                  placeholder="e.g., coding, research, writing"
+                />
+                <button className="primary-action">Create Specialized Agent</button>
               </div>
-            </div>
-
-            <div className="transfer-section">
-              <h2>📊 Agent Statistics</h2>
-              {agentStats ? (
-                <div className="stats-grid">
-                  <div className="stat-card">
-                    <div className="stat-number">{agentStats.documents_count}</div>
-                    <div className="stat-label">Documents</div>
-                  </div>
-                  <div className="stat-card">
-                    <div className="stat-number">{agentStats.total_conversations}</div>
-                    <div className="stat-label">Conversations</div>
-                  </div>
-                  <div className="stat-card">
-                    <div className="stat-number">{agentStats.knowledge_categories.length}</div>
-                    <div className="stat-label">Categories</div>
-                  </div>
-                  <div className="stat-card">
-                    <div className="stat-number">{formatFileSize(agentStats.storage_size)}</div>
-                    <div className="stat-label">Storage Used</div>
-                  </div>
-                </div>
-              ) : (
-                <p>Loading agent statistics...</p>
-              )}
+              <p className="help-text">
+                Create a new agent specialized in a specific domain from your current agent's knowledge
+              </p>
             </div>
           </div>
         )}
 
-        {activeTab === 'system' && (
+        {/* System Tab */}
+        {currentView === 'system' && (
           <div className="system-container">
             <div className="system-section">
-              <h2>🖥️ System Information</h2>
-              {systemInfo ? (
-                <div className="system-info">
-                  <div className="info-row">
-                    <span>Operating System:</span>
-                    <span>{systemInfo.os} {systemInfo.version}</span>
-                  </div>
-                  <div className="info-row">
-                    <span>CPU:</span>
-                    <span>{systemInfo.cpu_brand} ({systemInfo.cpu_count} cores)</span>
-                  </div>
-                  <div className="info-row">
-                    <span>Total Memory:</span>
-                    <span>{formatMemory(systemInfo.total_memory)}</span>
-                  </div>
-                  <div className="info-row">
-                    <span>Available Memory:</span>
-                    <span>{formatMemory(systemInfo.available_memory)}</span>
-                  </div>
+              <h2>📊 Agent Statistics</h2>
+              <div className="stats-grid">
+                <div className="stat-card">
+                  <div className="stat-number">{agents.length}</div>
+                  <div className="stat-label">Active Agents</div>
                 </div>
-              ) : (
-                <p>Loading system information...</p>
-              )}
+                <div className="stat-card">
+                  <div className="stat-number">{messages.length}</div>
+                  <div className="stat-label">Total Messages</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-number">{documents.length}</div>
+                  <div className="stat-label">Documents</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-number">0</div>
+                  <div className="stat-label">Knowledge Transfers</div>
+                </div>
+              </div>
             </div>
 
             <div className="system-section">
-              <h2>🔧 Services Status</h2>
-              <div className="services-status">
+              <h2>🔧 Service Status</h2>
+              <div className="service-status">
                 <div className="service-item">
-                  <span>Ollama (LLM)</span>
-                  <span className={`status ${ollamaStatus ? 'online' : 'offline'}`}>
-                    {ollamaStatus ? '✅ Running' : '❌ Offline'}
+                  <span>Ollama Service</span>
+                  <span className={ollamaStatus === 'online' ? 'online' : 'offline'}>
+                    {ollamaStatus === 'online' ? '🟢 Online' : '🔴 Offline'}
                   </span>
                 </div>
                 <div className="service-item">
                   <span>ChromaDB</span>
-                  <span className="status unknown">❓ Unknown</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="system-section">
-              <h2>📊 Statistics</h2>
-              <div className="stats">
-                <div className="stat-item">
-                  <span>Documents Indexed:</span>
-                  <span>{documents.length}</span>
-                </div>
-                <div className="stat-item">
-                  <span>Conversations:</span>
-                  <span>{Math.max(0, Math.floor(messages.length / 2))}</span>
+                  <span className={chromaStatus === 'online' ? 'online' : 'offline'}>
+                    {chromaStatus === 'online' ? '🟢 Connected' : '🔴 Disconnected'}
+                  </span>
                 </div>
               </div>
             </div>
           </div>
         )}
-      </main>
+      </div>
+
+      {/* Agent Creation Modal */}
+      {showCreateAgentModal && (
+        <div className="modal-overlay" onClick={() => setShowCreateAgentModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>🤖 Create New AI Agent</h3>
+            
+            <div className="form-group">
+              <label>Agent Name</label>
+              <input
+                type="text"
+                value={newAgentName}
+                onChange={(e) => setNewAgentName(e.target.value)}
+                placeholder="e.g., WorkBot, CodeMaster, ResearchPal"
+              />
+            </div>
+
+            <div className="form-group">
+              <label>Specialization</label>
+              <select
+                value={newAgentSpecialization}
+                onChange={(e) => setNewAgentSpecialization(e.target.value)}
+              >
+                <option value="general">General Assistant</option>
+                <option value="work">Professional/Business</option>
+                <option value="coding">Programming/Development</option>
+                <option value="research">Research/Academic</option>
+                <option value="writing">Writing/Content</option>
+                <option value="personal">Personal Assistant</option>
+                <option value="creative">Creative/Design</option>
+                <option value="technical">Technical Support</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label>Personality Style</label>
+              <div className="personality-options">
+                {['professional', 'friendly', 'analytical', 'creative', 'concise', 'detailed'].map(personality => (
+                  <div
+                    key={personality}
+                    className={`personality-option ${newAgentPersonality === personality ? 'selected' : ''}`}
+                    onClick={() => setNewAgentPersonality(personality)}
+                  >
+                    {getPersonalityIcon(personality)} {personality.charAt(0).toUpperCase() + personality.slice(1)}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label>Custom Instructions (Optional)</label>
+              <textarea
+                value={newAgentInstructions}
+                onChange={(e) => setNewAgentInstructions(e.target.value)}
+                placeholder="Any specific instructions for how this agent should behave..."
+              />
+            </div>
+
+            <div className="modal-actions">
+              <button 
+                className="btn-secondary"
+                onClick={() => setShowCreateAgentModal(false)}
+              >
+                Cancel
+              </button>
+              <button 
+                className="btn-primary"
+                onClick={createAgent}
+              >
+                Create Agent
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function getAgentIcon(specialization: string): string {
+  const icons = {
+    work: '💼',
+    coding: '💻',
+    research: '🔬',
+    writing: '📝',
+    personal: '👤',
+    creative: '🎨',
+    technical: '🔧',
+    general: '🤖'
+  };
+  return icons[specialization as keyof typeof icons] || '🤖';
+}
+
+function getPersonalityIcon(personality: string): string {
+  const icons = {
+    professional: '💼',
+    friendly: '😊',
+    analytical: '🔍',
+    creative: '🎨',
+    concise: '⚡',
+    detailed: '📝'
+  };
+  return icons[personality as keyof typeof icons] || '😊';
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
 export default App;
