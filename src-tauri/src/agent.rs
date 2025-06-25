@@ -321,3 +321,4 @@ impl Agent {
     pub fn get_preference(&self, key: &str) -> Option<&serde_json::Value> {
         self.memory.user_preferences.get(key)
     }
+}
