@@ -1,0 +1,78 @@
+# LocalMind - Root .gitignore
+
+# Operating System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# IDE and Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# Node.js Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Frontend Build Output
+dist/
+build/
+*.tsbuildinfo
+
+# Environment Variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Runtime Data Directories
+data/
+exports/backups/*.json
+exports/packages/*.json
+exports/specialized/*.json
+
+# Keep directory structure but ignore contents
+exports/backups/.gitkeep
+exports/packages/.gitkeep
+exports/specialized/.gitkeep
+
+# Logs
+logs/
+*.log
+
+# Temporary Files
+tmp/
+temp/
+.tmp/
+
+# Coverage Reports
+coverage/
+*.lcov
+
+# Cache Directories
+.cache/
+.parcel-cache/
+
+# Optional: VS Code settings (uncomment if you want to ignore)
+# .vscode/settings.json
+# .vscode/tasks.json
+# .vscode/launch.json
+# .vscode/extensions.json
+
+# Optional: Keep some VS Code files for team consistency
+!.vscode/extensions.json
+!.vscode/settings.json
