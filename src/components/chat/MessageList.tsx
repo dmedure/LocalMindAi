@@ -1,20 +1,25 @@
 import React from 'react';
 import { Message } from '../../types/message';
 import MessageItem from './MessageItem';
-import TypingIndicator from './TypingIndicator';
+import { EnhancedTypingIndicator } from '../common/RichMessageRender';
 
 interface MessageListProps {
   messages: Message[];
   isLoading: boolean;
+  agentName?: string;  // Added this missing prop
 }
 
-const MessageList: React.FC<MessageListProps> = ({ messages, isLoading }) => {
+const MessageList: React.FC<MessageListProps> = ({ messages, isLoading, agentName }) => {
   return (
     <div className="messages">
       {messages.map((message) => (
-        <MessageItem key={message.id} message={message} />
+        <MessageItem 
+          key={message.id} 
+          message={message} 
+          agentName={agentName}
+        />
       ))}
-      {isLoading && <TypingIndicator />}
+      {isLoading && agentName && <EnhancedTypingIndicator agentName={agentName} />}
     </div>
   );
 };
