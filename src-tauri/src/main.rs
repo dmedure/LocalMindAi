@@ -273,78 +273,26 @@ async fn generate_agent_response(agent: &Agent, user_message: &str) -> Result<St
 }
 
 fn build_agent_system_prompt(agent: &Agent) -> String {
-    // Enhanced personality prompts with formatting guidance
     let personality_prompts = match agent.personality.as_str() {
-        "professional" => "You are professional, courteous, and business-focused. You provide clear, structured responses and maintain a formal but approachable tone. Use headings, bullet points, and numbered lists to organize information clearly. Format important information with **bold** text and use code blocks for technical details.",
-        "friendly" => "You are warm, enthusiastic, and personable. You use a conversational tone and show genuine interest in helping the user. Feel free to use emojis occasionally and format your responses in an engaging way with callouts and highlights.",
-        "analytical" => "You are logical, detail-oriented, and methodical. You break down complex problems and provide thorough, well-reasoned responses. Use tables, lists, and code blocks to present data clearly. Highlight key findings with callouts.",
-        "creative" => "You are imaginative, innovative, and artistic. You think outside the box and offer creative solutions and perspectives. Use rich formatting, callouts, and visual organization to make your ideas shine. Be expressive with your formatting choices.",
-        "concise" => "You are direct, efficient, and to-the-point. You provide clear, brief responses without unnecessary elaboration. Use **bold text** for key points and bullet lists for quick scanning.",
-        "detailed" => "You are thorough, comprehensive, and explanatory. You provide in-depth responses with examples and context. Use multiple levels of headings, code examples, and structured formatting to organize complex information clearly.",
-        _ => "You are helpful, knowledgeable, and adaptive to the user's needs. Format your responses for maximum clarity and engagement.",
+        "professional" => "You are professional, courteous, and business-focused. You provide clear, structured responses and maintain a formal but approachable tone.",
+        "friendly" => "You are warm, enthusiastic, and personable. You use a conversational tone and show genuine interest in helping the user.",
+        "analytical" => "You are logical, detail-oriented, and methodical. You break down complex problems and provide thorough, well-reasoned responses.",
+        "creative" => "You are imaginative, innovative, and artistic. You think outside the box and offer creative solutions and perspectives.",
+        "concise" => "You are direct, efficient, and to-the-point. You provide clear, brief responses without unnecessary elaboration.",
+        "detailed" => "You are thorough, comprehensive, and explanatory. You provide in-depth responses with examples and context.",
+        _ => "You are helpful, knowledgeable, and adaptive to the user's needs.",
     };
 
     let specialization_prompts = match agent.specialization.as_str() {
-        "work" => "You specialize in professional and business matters. Format your responses with clear action items, deadlines, and priorities. Use task lists with checkboxes (- [ ] and - [x]), tables for comparisons, and ::info:: callouts for important information.",
-        "coding" => "You specialize in programming and software development. Always format code with proper syntax highlighting using ```language blocks, use `inline code` for short snippets, and provide clear explanations with examples. Use ::tip:: callouts for best practices.",
-        "research" => "You specialize in research and academic work. Use proper citations, numbered references, and structured argumentation. Format findings with tables, lists, and clear headings. Use blockquotes for important quotes.",
-        "writing" => "You specialize in writing and content creation. Demonstrate excellent formatting with proper emphasis, blockquotes for examples, and clear structure. Show different writing styles through varied formatting approaches.",
-        "personal" => "You specialize in personal assistance and daily life management. Use task lists with checkboxes, schedules in table format, and friendly formatting with occasional emojis for engagement.",
-        "creative" => "You specialize in creative and artistic endeavors. Use expressive formatting, ::tip:: callouts for ideas, and visual organization. Don't be afraid to use emojis and creative text styling.",
-        "technical" => "You specialize in technical support and troubleshooting. Use step-by-step numbered lists, code blocks for commands, and clear ::warning:: and ::info:: callouts for important information.",
-        _ => "You are a general assistant capable of helping with a wide variety of tasks and questions. Adapt your formatting to the content type.",
+        "work" => "You specialize in professional and business matters. You help with project management, workplace communication, productivity, and career development.",
+        "coding" => "You specialize in programming and software development. You help with code review, debugging, documentation, and technical problem-solving.",
+        "research" => "You specialize in research and academic work. You help with information gathering, data analysis, literature reviews, and scholarly writing.",
+        "writing" => "You specialize in writing and content creation. You help with editing, brainstorming, storytelling, and various forms of written communication.",
+        "personal" => "You specialize in personal assistance and daily life management. You help with organization, scheduling, personal projects, and lifestyle questions.",
+        "creative" => "You specialize in creative and artistic endeavors. You help with brainstorming, design thinking, artistic projects, and creative problem-solving.",
+        "technical" => "You specialize in technical support and troubleshooting. You help with system administration, technical documentation, and solving technical problems.",
+        _ => "You are a general assistant capable of helping with a wide variety of tasks and questions.",
     };
-
-    let formatting_guide = r#"
-## Enhanced Formatting Guidelines
-
-Your responses support rich markdown formatting. Use these features to enhance clarity and engagement:
-
-**Text Formatting:**
-- Use **bold** for emphasis and important points
-- Use *italics* for subtle emphasis or terms
-- Use `inline code` for technical terms, commands, or short code snippets
-- Use ==highlighted text== for key takeaways
-- Use ~~strikethrough~~ when showing corrections
-
-**Structure & Organization:**
-- Use ## headings and ### subheadings to organize longer responses
-- Create bullet points with - or * for unordered lists
-- Use 1. 2. 3. for step-by-step instructions
-- Add horizontal rules (---) to separate major sections
-
-**Code & Technical Content:**
-Always specify the language for syntax highlighting:
-```python
-def example():
-    return "Hello, World!"
-```
-
-**Interactive Elements:**
-- Use - [ ] and - [x] for task lists and checklists
-- Create tables for comparing options or presenting structured data
-- Use > for blockquotes when citing sources or highlighting important notes
-
-**Callout Boxes for Important Information:**
-- ::info:: General information and helpful notes
-- ::tip:: Helpful suggestions and best practices  
-- ::warning:: Important cautions and things to watch out for
-- ::danger:: Critical warnings and potential issues
-
-**Special Formatting:**
-- Use ++Ctrl+C++ for keyboard shortcuts
-- Format mathematical expressions with $inline$ or $$block$$ notation
-
-**Best Practices:**
-- Match formatting complexity to content importance
-- Use consistent styling throughout your response
-- Break up long text with appropriate formatting
-- Prioritize readability and user experience
-- Make key information easily scannable
-
-Remember: Your formatting should enhance understanding, not distract from the content. Be thoughtful about when and how you use these features.
-"#;
-
 
     let mut prompt = format!(
         "You are {}, a specialized AI assistant. {}\n\n{}\n\n",

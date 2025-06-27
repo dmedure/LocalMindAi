@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Agent } from '../../types/agent';
 import { Message } from '../../types/message';
 import { getAgentIntroduction } from '../../utils/formatting';
@@ -18,15 +18,6 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
   isLoading,
   onSendMessage
 }) => {
-  const handleSendMessage = async (content: string) => {
-    try {
-      await onSendMessage(content);
-    } catch (error) {
-      console.error('Failed to send message:', error);
-      // You could add error handling/notification here
-    }
-  };
-
   return (
     <div className="chat-container">
       <div className="agent-intro">
@@ -37,27 +28,12 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
             <strong>Special Focus:</strong> {agent.instructions}
           </div>
         )}
-        
-        <div className="formatting-preview">
-          <details>
-            <summary>✨ Rich formatting available</summary>
-            <div className="formatting-examples">
-              <p><strong>Bold text</strong>, <em>italic text</em>, <code>inline code</code></p>
-              <p>📝 Lists, 📊 tables, 💡 callouts, and much more!</p>
-            </div>
-          </details>
-        </div>
       </div>
 
-      <MessageList 
-        messages={messages} 
-        isLoading={isLoading} 
-        agentName={agent.name}
-      />
-      
+      <MessageList messages={messages} isLoading={isLoading} />
       <MessageInput
         agentName={agent.name}
-        onSendMessage={handleSendMessage}
+        onSendMessage={onSendMessage}
         disabled={isLoading}
       />
     </div>
