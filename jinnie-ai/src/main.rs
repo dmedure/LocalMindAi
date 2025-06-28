@@ -5,8 +5,8 @@ use dioxus::prelude::*;
 use dioxus_desktop::{Config, WindowBuilder, LogicalSize};
 use tokio::runtime::Runtime;
 
-// Your existing imports
-use local_ai_agent::initialize_app;
+// Import from your own crate (jinnie_ai) instead of local_ai_agent
+use jinnie_ai::initialize_app;
 
 // UI imports
 mod ui;
@@ -15,8 +15,8 @@ use ui::app::App;
 /// Application state that bridges your backend with the Dioxus frontend
 #[derive(Clone)]
 pub struct AppState {
-    /// Your existing app state from local_ai_agent
-    pub backend_state: Arc<local_ai_agent::AppState>,
+    /// Your existing app state from jinnie_ai
+    pub backend_state: Arc<jinnie_ai::AppState>,
     /// Tokio runtime handle for async operations
     pub runtime_handle: tokio::runtime::Handle,
 }
@@ -33,11 +33,11 @@ fn main() {
     let runtime = Runtime::new()
         .expect("Failed to create Tokio runtime");
 
-    // Initialize your existing backend state
+    // Initialize your backend state
     let backend_state = runtime.block_on(async {
-        log::info!("Initializing LocalMind backend...");
+        log::info!("Initializing Jinnie AI backend...");
         initialize_app().await
-            .expect("Failed to initialize LocalMind backend")
+            .expect("Failed to initialize backend")
     });
 
     log::info!("✅ Backend initialized successfully");
@@ -98,85 +98,96 @@ fn AppWithState(props: AppWithStateProps) -> Element {
 
 /// Backend integration functions that your UI can call
 impl AppState {
-    /// Send a message to an agent (replaces the old Tauri command)
+    /// Send a message to an agent
     pub async fn send_message_to_agent(
         &self,
         agent_id: String,
         message: String,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        // TODO: Integrate with your existing send_message_to_agent logic
-        // This is where you'd call your backend's message handling
-        log::info!("Sending message to agent {}: {}", agent_id, message);
+        // Use your existing backend functionality
+        let agents = self.backend_state.agents.lock().await;
+        let agent = agents.get(&agent_id)
+            .ok_or("Agent not found")?;
         
-        // Placeholder response - replace with your actual backend call
-        Ok(format!("Response from agent {}: I received your message '{}'", agent_id, message))
+        // Generate AI response using your AI module
+        let response = jinnie_ai::ai::generate_agent_response(agent, &message).await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        
+        // Store the message exchange
+        let mut messages = self.backend_state.messages.lock().await;
+        
+        // Add user message
+        let user_message = jinnie_ai::Message::new(
+            message,
+            agent_id.clone(),
+            jinnie_ai::types::message::MessageRole::User,
+        );
+        messages.entry(agent_id.clone())
+            .or_insert_with(Vec::new)
+            .push(user_message);
+        
+        // Add AI response
+        let ai_message = jinnie_ai::Message::new(
+            response.clone(),
+            agent_id.clone(),
+            jinnie_ai::types::message::MessageRole::Assistant,
+        );
+        messages.entry(agent_id)
+            .or_insert_with(Vec::new)
+            .push(ai_message);
+        
+        Ok(response)
     }
 
-    /// Get agent messages (replaces the old Tauri command)
+    /// Get agent messages
     pub async fn get_agent_messages(
         &self,
         agent_id: String,
-    ) -> Result<Vec<local_ai_agent::types::message::Message>, Box<dyn std::error::Error + Send + Sync>> {
-        // TODO: Integrate with your existing get_agent_messages logic
-        log::info!("Getting messages for agent: {}", agent_id);
-        
-        // Placeholder - replace with your actual backend call
-        Ok(vec![])
+    ) -> Result<Vec<jinnie_ai::Message>, Box<dyn std::error::Error + Send + Sync>> {
+        let messages = self.backend_state.messages.lock().await;
+        Ok(messages.get(&agent_id)
+            .cloned()
+            .unwrap_or_default())
     }
 
-    /// Get available agents (replaces the old Tauri command)
-    pub async fn get_agents(&self) -> Result<Vec<local_ai_agent::types::agent::Agent>, Box<dyn std::error::Error + Send + Sync>> {
-        // TODO: Integrate with your existing get_agents logic
-        log::info!("Getting available agents");
-        
-        // Placeholder - replace with your actual backend call
-        Ok(vec![])
+    /// Get available agents
+    pub async fn get_agents(&self) -> Result<Vec<jinnie_ai::Agent>, Box<dyn std::error::Error + Send + Sync>> {
+        let agents = self.backend_state.agents.lock().await;
+        Ok(agents.values().cloned().collect())
     }
 
-    /// Create a new agent (replaces the old Tauri command)
+    /// Create a new agent
     pub async fn create_agent(
         &self,
         name: String,
         model: String,
         description: String,
         system_prompt: String,
-    ) -> Result<local_ai_agent::types::agent::Agent, Box<dyn std::error::Error + Send + Sync>> {
-        // TODO: Integrate with your existing create_agent logic
-        log::info!("Creating new agent: {}", name);
+    ) -> Result<jinnie_ai::Agent, Box<dyn std::error::Error + Send + Sync>> {
+        let agent = jinnie_ai::Agent::new(name, model)
+            .with_description(description)
+            .with_system_prompt(system_prompt);
         
-        // Placeholder - replace with your actual backend call
-        Err("Not implemented yet".into())
+        let mut agents = self.backend_state.agents.lock().await;
+        agents.insert(agent.id.clone(), agent.clone());
+        
+        // Save to storage
+        jinnie_ai::storage::AgentStorage::save(&agents).await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        
+        Ok(agent)
     }
 
-    /// Clear chat history (replaces the old Tauri command)
+    /// Clear chat history
     pub async fn clear_chat(&self, agent_id: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // TODO: Integrate with your existing clear_chat logic
-        log::info!("Clearing chat for agent: {}", agent_id);
+        let mut messages = self.backend_state.messages.lock().await;
+        messages.remove(&agent_id);
         
-        // Placeholder - replace with your actual backend call
+        // Save updated messages
+        jinnie_ai::storage::MessageStorage::save(&messages).await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        
         Ok(())
-    }
-
-    /// Search memories (replaces the old Tauri command)
-    pub async fn search_memories(
-        &self,
-        query: String,
-        limit: Option<usize>,
-    ) -> Result<Vec<local_ai_agent::types::memory::Memory>, Box<dyn std::error::Error + Send + Sync>> {
-        // TODO: Integrate with your existing search_memories logic
-        log::info!("Searching memories with query: {}", query);
-        
-        // Placeholder - replace with your actual backend call
-        Ok(vec![])
-    }
-
-    /// Get system information (replaces the old Tauri command)
-    pub async fn get_system_info(&self) -> Result<local_ai_agent::types::system::SystemInfo, Box<dyn std::error::Error + Send + Sync>> {
-        // TODO: Integrate with your existing get_system_info logic
-        log::info!("Getting system information");
-        
-        // Placeholder - replace with your actual backend call
-        Err("Not implemented yet".into())
     }
 
     /// Execute async operations on the runtime

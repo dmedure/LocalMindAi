@@ -11,17 +11,9 @@ pub mod memory;
 pub mod vector;
 pub mod ai;
 pub mod services;
-
-// Command modules
 pub mod commands;
 
-// Re-exports for convenience
-pub use types::{Agent, Message, Document};
-pub use utils::{LocalMindError, Result};
-pub use state::{AppState, initialize_app_state};
-pub use config::{AppConfig, ModelConfig, PlatformConfig};
-
-// Platform-specific modules
+// Platform modules
 #[cfg(target_os = "windows")]
 pub mod windows;
 
@@ -31,17 +23,30 @@ pub mod macos;
 #[cfg(target_os = "linux")]
 pub mod linux;
 
-/// Initialize the LocalMind application
+// Re-exports for convenience
+pub use types::{Agent, Message, Document};
+pub use state::AppState;
+pub use config::{AppConfig, ModelConfig};
+
+// Additional needed modules based on code review
+pub mod knowledge;
+pub mod knowledge_transfer;
+pub mod platform;
+pub mod ui;
+
+// Error handling
+use anyhow::Result;
+
+/// Initialize the Jinnie AI application
 pub async fn initialize_app() -> Result<AppState> {
     // Initialize logging
-    env_logger::init();
-    log::info!("Starting LocalMind AI Agent");
+    log::info!("Starting Jinnie AI Assistant");
 
     // Load configuration
-    let config = config::initialize_config().await?;
+    let config = config::ConfigManager::initialize().await?;
     
     // Initialize application state
-    let state = initialize_app_state(config).await?;
+    let state = state::initialize_app_state(config).await?;
     
     // Initialize services
     services::initialize_services(&state).await?;
@@ -49,13 +54,14 @@ pub async fn initialize_app() -> Result<AppState> {
     // Initialize LLM engine
     llm::initialize_llm_engine(&state).await?;
     
-    // Initialize vector store
+    // Initialize vector store if feature is enabled
+    #[cfg(feature = "vector-db")]
     vector::initialize_vector_store(&state).await?;
     
     // Initialize memory system
     memory::initialize_memory_system(&state).await?;
     
-    log::info!("LocalMind initialized successfully");
+    log::info!("Jinnie AI initialized successfully");
     Ok(state)
 }
 
