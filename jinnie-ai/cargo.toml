@@ -67,7 +67,7 @@ llm = { version = "0.1", optional = true }
 # ============================================================================
 # VECTOR DATABASE & EMBEDDINGS
 # ============================================================================
-qdrant-client = { version = "1.10", optional = true, default-features = false, features = ["download-prebuilt"] }
+qdrant-client = { version = "1.10", optional = true }
 uuid = { version = "1.10", features = ["v4", "serde"] }
 
 # ============================================================================
